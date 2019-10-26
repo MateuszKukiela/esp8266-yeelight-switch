@@ -20,25 +20,36 @@
 #include <ESP8266mDNS.h>
 #include <jled.h>             // https://github.com/jandelgado/jled
 #include <AceButton.h>        // https://github.com/bxparks/AceButton
-#include <AceTime.h>          // https://github.com/bxparks/AceTime
 #include <LinkedList.h>       // https://github.com/ivanseidel/LinkedList
+#include <string> 
+
+using namespace ace_button;
+
+int CLK = 4;  // Pin 9 to clk on encoder
+int DT = 5;  // Pin 8 to DT on encoder
+int SW = 0;
+int RotPosition = 0;
+int LastPosition;
+int RotPosition_temperature = 1700;
+int LastPosition_temperature;
+int rotation; 
+int rotation_temperature;   
+int value;
+int value_temperature;
+boolean LeftRight;
+boolean LeftRight_temperature;
 
 // Configuration
 const char *HOSTNAME = "ybutton1";        // <hostname>.local of the button in the local network. Also SSID of the temporary network for Wi-Fi configuration
 const char *WIFICONFIGPASS = "Yeelight";  // Password used to connect to the temporary network for Wi-Fi configuration
-const int PUSHBUTTON = D2;                // MCU pin connected to the main push button (D2 for Witty Cloud). The code below assumes the button is pulled high (HIGH == OFF)
-const int BUILTINLED = D4;                // MCU pin connected to the built-in LED (D4 for Witty Cloud). The code below assumes the LED is pulled high (HIGH == OFF)
-#define TIMEZONE Europe_Paris             // See https://en.wikipedia.org/wiki/List_of_tz_database_time_zones (replace / with _)
+const int PUSHBUTTON = 0;                // MCU pin connected to the main push button (D2 for Witty Cloud). The code below assumes the button is pulled high (HIGH == OFF)
+const int BUILTINLED = 2;                // MCU pin connected to the built-in LED (D4 for Witty Cloud). The code below assumes the LED is pulled high (HIGH == OFF)
 
 // Normally no need to change below this line
 const char *APPNAME = "ESP8266 Yeelight Switch";
 const char *APPVERSION = "2.0beta";
 const char *APPURL = "https://github.com/denis-stepanov/esp8266-yeelight-switch";
 const unsigned int BAUDRATE = 115200;     // Serial connection speed
-
-using namespace ace_button;
-using namespace ace_time;
-using namespace ace_time::clock;
 
 // Yeelight protocol; see https://www.yeelight.com/en_US/developer
 const char *YL_MSG_TOGGLE = "{\"id\":1,\"method\":\"toggle\",\"params\":[]}\r\n";
@@ -54,6 +65,7 @@ class YBulb {
     char model[16];
     bool power;
     bool active;
+    int level;
 
   public:
     YBulb(const char *, const char *, const uint16_t);
@@ -71,6 +83,8 @@ class YBulb {
     void Activate() { active = true; }
     void Deactivate() { active = false; }
     int Flip(WiFiClient&) const;
+    int Bright(WiFiClient&, int level) const;
+    int Temperature(WiFiClient&, int temperature) const;
     bool operator==(const char *id2) const {
       return !strcmp(id, id2);
     }
@@ -112,38 +126,30 @@ int YBulb::Flip(WiFiClient &wfc) const {
     return -1;
 }
 
-// Return timestamp in gmag11/NtpClient style (hh:mm:ss dd/mm/yyyy")
-// Unfortunately, AceTime does not provide a function to return a DateTime string (printTo() is considered as a debugging option)
-String AceDateTimeString(ZonedDateTime &dt) {
-  String str;
-  if (dt.isError())
-    str = "--:--:-- --/--/----";
-  else {
+int YBulb::Bright(WiFiClient &wfc, int level) const {
+  String level_string = String(level);
+  if (wfc.connect(ip, port)) {
+    String bulb_method = "{\"id\":1,\"method\":\"set_bright\",\"params\":[" + level_string;
+    String bulb_method2 = bulb_method + "]}\r\n";
+    Serial.print(bulb_method2.c_str());
+    wfc.print(bulb_method2.c_str());
+    wfc.stop();
+    return 0;
+  } else
+    return -1;
+}
 
-    // Unfortunately, String class cannot zero-pad
-    if (dt.hour() < 10)
-      str += "0";
-    str += dt.hour();
-    str += ":";
-    if (dt.minute() < 10)
-      str += "0";
-    str += dt.minute();
-    str += ":";
-    if (dt.second() < 10)
-      str += "0";
-    str += dt.second();
-    str += " ";
-    if (dt.day() < 10)
-      str += "0";
-    str += dt.day();
-    str += "/";
-    if (dt.month() < 10)
-      str += "0";
-    str += dt.month();
-    str += "/";
-    str += dt.year();
-  }
-  return str;
+int YBulb::Temperature(WiFiClient &wfc, int temperature) const {
+  String temperature_string = String(temperature);
+  if (wfc.connect(ip, port)) {
+    String bulb_method = "{\"id\":1,\"method\":\"set_ct_abx\",\"params\":[" + temperature_string;
+    String bulb_method2 = bulb_method + ", \"sudden\", 100]}\r\n";
+    Serial.print(bulb_method2.c_str());
+    wfc.print(bulb_method2.c_str());
+    wfc.stop();
+    return 0;
+  } else
+    return -1;
 }
 
 // Logger class. TODO: make a library out of this
@@ -156,51 +162,46 @@ const unsigned int LOGSLACK = 2048U;
 const size_t LOGSIZEMAX = 1048576U; // For large file systems, hard-limit log size. It is not likely that more than 2MiB of logs will be needed
 class Logger {
     File logFile;
+    bool enabled;
     size_t logSize;
     size_t logSizeMax;
-    SystemClock *clock;
-    TimeZone *timeZone;
   public:
-    Logger(SystemClock *clk = nullptr, TimeZone *tz = nullptr): logSize(0), logSizeMax(0), clock(clk), timeZone(tz) {};
-    ~Logger() { end(); };
-    bool begin();
-    bool end();
-    bool isEnabled() const { return logSizeMax; };
+    Logger();
+    ~Logger();
+    bool isEnabled() const { return enabled; };
     void writeln(const char *);
     void writeln(const String &);
     void rotate();
 };
 
-//// Start logging activities
-bool Logger::begin() {
-  if (SPIFFS.begin()) {       // TODO: make this work with SPIFFS already initialized
+//// Initialize logger
+Logger::Logger() {
+  enabled = SPIFFS.begin();
+  if (enabled) {
     FSInfo fsi;
     SPIFFS.info(fsi);
     if (fsi.totalBytes > LOGSLACK)
       logSizeMax = (fsi.totalBytes - LOGSLACK) / 2 < LOGSIZEMAX ? (fsi.totalBytes - LOGSLACK) / 2 : LOGSIZEMAX;
     else {
-      SPIFFS.end();
+      enabled = false;
       logSize = 0;
       logSizeMax = 0;
     }
     logFile = SPIFFS.open(LOGFILENAME, "a");
     if (!logFile) {
       SPIFFS.end();
+      enabled = false;
       logSize = 0;
       logSizeMax = 0;
     } else
       logSize = logFile.size();
   }
-  return logSizeMax;
 }
 
-//// Finish logging activities
-bool Logger::end() {
+//// Terminate logger
+Logger::~Logger() {
   logFile.close();
   SPIFFS.end();
-  logSize = 0;
-  logSizeMax = 0;
-  return true;
 }
 
 //// Write a line to a log
@@ -210,12 +211,9 @@ void Logger::writeln(const char *line) {
 
 //// Write a line to a log
 void Logger::writeln(const String &line) {
-  if (logSizeMax) {
-    String msg;
-    ZonedDateTime dt = clock && timeZone ? ZonedDateTime::forEpochSeconds(clock->getNow(), *timeZone) : ZonedDateTime::forError();
-    msg += AceDateTimeString(dt);
-    msg += " ";
-    msg += line;
+  if (enabled) {
+    const String timestamp = "--:--:-- --/--/---- "; // TODO NTP
+    String msg = timestamp + line;
     logFile.println(msg);
     logFile.flush();
     logSize += msg.length();
@@ -224,16 +222,15 @@ void Logger::writeln(const String &line) {
 
 //// Check log size and rotate if needed
 void Logger::rotate() {
-  if (logSize > logSizeMax) {
+  if (enabled && logSize >= logSizeMax) {
     Serial.printf("Max log size (%u) reached, rotating...\n", logSizeMax);
     logFile.close();
     SPIFFS.remove(LOGFILENAME2);          // Rename will fail if file exists
     SPIFFS.rename(LOGFILENAME, LOGFILENAME2);
-    logSize = 0;
     logFile = SPIFFS.open(LOGFILENAME, "a");
     if(!logFile) {
-      end();
-      Serial.println("Log rotation failed; disabling logging");
+      enabled = false;
+      Serial.println("Log rotation failed");
     }
   }
 }
@@ -244,6 +241,7 @@ const unsigned long BLINK_DELAY = 100UL;    // (ms)
 const unsigned long GLOW_DELAY = 1000UL;    // (ms)
 AceButton button(PUSHBUTTON);
 bool button_pressed = false;
+bool button_double_clicked = false;
 
 WiFiClient client;                  // Client used to talk to a bulb
 WiFiUDP udp;                        // UDP socket used for discovery process
@@ -256,21 +254,27 @@ const uint16_t CONNECTION_TIMEOUT = 1000U;  // Bulb connection timeout (ms)
 LinkedList<YBulb *> bulbs;          // List of known bulbs
 uint8_t nabulbs = 0;                // Number of active bulbs
 
-#define ACETIME_TZ_NX(tz) zonedb::kZone##tz
-#define ACETIME_TZ(tz) ACETIME_TZ_NX(tz)          // Preprocessor trick needed to expand the macro before concatenation
-BasicZoneProcessor zoneProcessor;
-TimeZone timeZone;
-NtpClock ntpClock("pool.ntp.org");  // Somehow, the default pool in AceTime is USA; so reset it
-SystemClockLoop sysClock(&ntpClock, nullptr);
-bool sysClockIsInit = false;
-
-Logger logger(&sysClock, &timeZone);              // Event logger
+Logger logger;
 
 const char *COMPILATION_TIMESTAMP = __DATE__ " " __TIME__;
 
 // Button handler
 void handleButtonEvent(AceButton* /* button */, uint8_t eventType, uint8_t /* buttonState */) {
-  button_pressed = eventType == AceButton::kEventPressed;
+  switch (eventType) {
+    case AceButton::kEventDoubleClicked:
+//    button_pressed = eventType == AceButton::kEventPressed;
+      Serial.println("Double clicked");
+      button_double_clicked = true;
+      break;
+    case AceButton::kEventClicked:
+      button_pressed = eventType == AceButton::kEventClicked;
+      break;
+    case AceButton::kEventReleased:
+      button_pressed = eventType == AceButton::kEventReleased;
+      break;
+
+  }
+  
 }
 
 // Yeelight discovery. Note - no bulb removal at the moment
@@ -386,6 +390,53 @@ int yl_flip(void) {
   }
   return ret;
 }
+
+
+// Set brightness
+int yl_bright(int level) {
+  int ret = 0;
+  if (nabulbs) {
+    for (uint8_t i = 0; i < bulbs.size(); i++) {
+      YBulb *bulb = bulbs.get(i);
+      if (bulb->isActive()) {
+        if (bulb->Bright(client, level)) {
+          Serial.printf("Bulb connection to %s failed\n", bulb->GetIP());
+          ret = -2;
+          yield();        // Connection timeout is lenghty; allow for background processing (is this really needed?)
+        } else
+          Serial.printf("Bulb %d toggle sent\n", i + 1);
+      }
+    }
+  } else {
+    Serial.println("No linked bulbs found");
+    ret = -1;
+  }
+  return ret;
+}
+
+
+// Set temperature
+int yl_temperature(int temperature) {
+  int ret = 0;
+  if (nabulbs) {
+    for (uint8_t i = 0; i < bulbs.size(); i++) {
+      YBulb *bulb = bulbs.get(i);
+      if (bulb->isActive()) {
+        if (bulb->Temperature(client, temperature)) {
+          Serial.printf("Bulb connection to %s failed\n", bulb->GetIP());
+          ret = -2;
+          yield();        // Connection timeout is lenghty; allow for background processing (is this really needed?)
+        } else
+          Serial.printf("Bulb %d toggle sent\n", i + 1);
+      }
+    }
+  } else {
+    Serial.println("No linked bulbs found");
+    ret = -1;
+  }
+  return ret;
+}
+
 
 // Return number of active bulbs
 uint8_t yl_nabulbs(void) {
@@ -679,8 +730,10 @@ void handleLog() {
 // Program setup
 const unsigned long WIFI_CONNECT_TIMEOUT = 20000UL;  // (ms)
 void setup(void) {
-
-  logger.begin();
+  pinMode (CLK,INPUT);
+  pinMode (DT,INPUT);
+  pinMode (SW, INPUT);
+  rotation = digitalRead(CLK);   
   String msg = "booted: ";
   msg += APPNAME;
   msg += " v";
@@ -694,11 +747,12 @@ void setup(void) {
   Serial.println("");
 
   // I/O
+  pinMode(BUILTINLED, OUTPUT);
   pinMode(PUSHBUTTON, INPUT);
   led.LowActive();
 
   // If the push button is pressed on boot, offer Wi-Fi configuration
-  if (button.isPressedRaw()) {
+  if (button.isPressedRaw() == true) {
     Serial.println("Push button pressed on boot; going to Wi-Fi Manager");
     logger.writeln("going to Wi-Fi Manager");
     led.On().Update();
@@ -706,7 +760,18 @@ void setup(void) {
     WiFiManager wifiManager;
     wifiManager.startConfigPortal(HOSTNAME, WIFICONFIGPASS);
   }
-  button.setEventHandler(handleButtonEvent);
+//  button.setEventHandler(handleButtonEvent);
+  ButtonConfig* buttonConfig = button.getButtonConfig();
+  buttonConfig->setEventHandler(handleButtonEvent);
+  buttonConfig->setFeature(ButtonConfig::kFeatureDoubleClick);
+  buttonConfig->setFeature(
+      ButtonConfig::kFeatureSuppressClickBeforeDoubleClick);
+  buttonConfig->setFeature(ButtonConfig::kFeatureSuppressAfterClick);
+  buttonConfig->setFeature(ButtonConfig::kFeatureSuppressAfterDoubleClick);
+  buttonConfig->setClickDelay(150);
+  buttonConfig->setDoubleClickDelay(250);
+  
+
   led.Off().Update();
 
   // Network
@@ -735,12 +800,7 @@ void setup(void) {
   } else {
     Serial.println("Connection timeout");
     logger.writeln("Wi-Fi connection timeout on boot");
-  }
-
-  // Setup clock
-  timeZone = TimeZone::forZoneInfo(&ACETIME_TZ(TIMEZONE), &zoneProcessor);
-  ntpClock.setup();
-  sysClock.setup();
+ }
 
   // Run discovery
   yl_discover();
@@ -795,12 +855,99 @@ void setup(void) {
 
 // Program loop
 void loop(void) {
+  
+//   if (digitalRead(SW) == LOW){
+//    RotPosition = 0;
+//    Serial.println("button pressed");
+//    Serial.print("Encoder RotPosition: ");
+//    Serial.println(RotPosition);
+//    delay(500);
+//   }
+   value = digitalRead(CLK);
+     if (value != rotation){ // we use the DT pin to find out which way we turning.
+     if (digitalRead(DT) != value) {  // Clockwise
+       RotPosition += 5;
+       LeftRight = true;
+     } else { //Counterclockwise
+       LeftRight = false;
+       RotPosition -= 5;
+     }
+     if (RotPosition >= 100){
+      RotPosition = 100;
+     }
+     if (RotPosition <= 0){
+      RotPosition = 0;
+     }
+     if (RotPosition != LastPosition){
+       if (LeftRight){ // turning right will turn on red led.
+         Serial.println ("clockwise");
+         LastPosition = RotPosition;
+         yl_bright(RotPosition);
+       }else{        // turning left will turn on green led.   
+         Serial.println("counterclockwise");
+         LastPosition = RotPosition;
+         yl_bright(RotPosition);
+       }
+       Serial.print("Encoder RotPosition: ");
+       Serial.println(RotPosition);
+       Serial.println ("clockwise");
+     }
+     
+   } 
+   rotation = value;
 
+ 
   // Check the button state
+  if (button_double_clicked) {
+    button_double_clicked = false;
+    while (button_double_clicked == false){
+     value_temperature = digitalRead(CLK);
+     if (value_temperature != rotation_temperature){ // we use the DT pin to find out which way we turning.
+     if (digitalRead(DT) != value_temperature) {  // Clockwise
+       RotPosition_temperature += 200;
+       LeftRight_temperature = true;
+     } else { //Counterclockwise
+       LeftRight_temperature = false;
+       RotPosition_temperature -= 200;
+     }
+     if (RotPosition_temperature >= 6500){
+      RotPosition_temperature = 6500;
+     }
+     if (RotPosition_temperature <= 1700){
+      RotPosition_temperature = 1700;
+     }
+     if (RotPosition_temperature != LastPosition_temperature){
+       if (LeftRight_temperature){ // turning right will turn on red led.
+         Serial.println ("clockwise_temperature");
+         LastPosition_temperature = RotPosition_temperature;
+         yl_temperature(RotPosition_temperature);
+       }else{        // turning left will turn on green led.   
+         Serial.println("counterclockwise_temperature");
+         LastPosition_temperature = RotPosition_temperature;
+         yl_temperature(RotPosition_temperature);
+       }
+       Serial.print("Encoder RotPosition_temperature: ");
+       Serial.println(RotPosition_temperature);
+       Serial.println ("clockwise_temperature");
+     }
+     
+   } 
+      rotation_temperature = value_temperature;
+      button.check();
+      led.Update();
+      server.handleClient();
+      MDNS.update();
+      logger.rotate();
+    }
+    button_double_clicked = false;
+  }
   if (button_pressed) {
     button_pressed = false;
     Serial.println("Button pressed");
     logger.writeln("Button pressed");
+    led.On().Update();
+    delay(BLINK_DELAY);       // 1 blink
+    led.Off().Update();
 
     // LED diagnostics:
     // 1 blink  - light flip OK
@@ -820,7 +967,7 @@ void loop(void) {
         // This is not included in ESP8266 Core (https://github.com/esp8266/Arduino/issues/922), but is available as a separate library (like ESPAsyncTCP)
         // Since, for this project, it is a minor issue (flip being sent to bulbs with 100 ms delay), we stay with blocking connect()
         led.On().Update();
-        delay(BLINK_DELAY);       // 1 blink. Note that using delay() inside loop() may skew sysClock, as per AceTime documentation
+        delay(BLINK_DELAY);       // 1 blink
         led.Off().Update();
 
         if (yl_flip())
@@ -838,18 +985,10 @@ void loop(void) {
     }
   }
 
-  // Report initial NTP synchronization event
-  if (sysClockIsInit != sysClock.isInit()) {
-    sysClockIsInit = sysClock.isInit();
-    if (sysClockIsInit)
-      logger.writeln("System clock synchronized with NTP");
-  }
-
   // Background processing
   button.check();
   led.Update();
   server.handleClient();
   MDNS.update();
-  sysClock.loop();
   logger.rotate();
 }
