@@ -824,8 +824,8 @@ void setup(void) {
       ButtonConfig::kFeatureSuppressClickBeforeDoubleClick);
   buttonConfig->setFeature(ButtonConfig::kFeatureSuppressAfterClick);
   buttonConfig->setFeature(ButtonConfig::kFeatureSuppressAfterDoubleClick);
-  buttonConfig->setClickDelay(150);
-  buttonConfig->setDoubleClickDelay(250);
+  buttonConfig->setClickDelay(120);
+  buttonConfig->setDoubleClickDelay(220);
   
 
   led.Off().Update();
