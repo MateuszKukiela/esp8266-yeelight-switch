@@ -20,10 +20,25 @@
 #include <ESP8266mDNS.h>
 #include <jled.h>             // https://github.com/jandelgado/jled
 #include <AceButton.h>        // https://github.com/bxparks/AceButton
+#include <AceTime.h>          // https://github.com/bxparks/AceTime
 #include <LinkedList.h>       // https://github.com/ivanseidel/LinkedList
-#include <string> 
+
+// Configuration
+const char *HOSTNAME = "ybutton1";        // <hostname>.local of the button in the local network. Also SSID of the temporary network for Wi-Fi configuration
+const char *WIFICONFIGPASS = "Yeelight";  // Password used to connect to the temporary network for Wi-Fi configuration
+const int PUSHBUTTON = 0;                // MCU pin connected to the main push button (D2 for Witty Cloud). The code below assumes the button is pulled high (HIGH == OFF)
+const int BUILTINLED = 2;                // MCU pin connected to the built-in LED (D4 for Witty Cloud). The code below assumes the LED is pulled high (HIGH == OFF)
+#define TIMEZONE Europe_Paris             // See https://en.wikipedia.org/wiki/List_of_tz_database_time_zones (replace / with _)
+
+// Normally no need to change below this line
+const char *APPNAME = "ESP8266 Yeelight Switch";
+const char *APPVERSION = "2.0beta";
+const char *APPURL = "https://github.com/denis-stepanov/esp8266-yeelight-switch";
+const unsigned int BAUDRATE = 115200;     // Serial connection speed
 
 using namespace ace_button;
+using namespace ace_time;
+using namespace ace_time::clock;
 
 int CLK = 4;  // Pin 9 to clk on encoder
 int DT = 5;  // Pin 8 to DT on encoder
@@ -38,18 +53,6 @@ int value;
 int value_temperature;
 boolean LeftRight;
 boolean LeftRight_temperature;
-
-// Configuration
-const char *HOSTNAME = "ybutton1";        // <hostname>.local of the button in the local network. Also SSID of the temporary network for Wi-Fi configuration
-const char *WIFICONFIGPASS = "Yeelight";  // Password used to connect to the temporary network for Wi-Fi configuration
-const int PUSHBUTTON = 0;                // MCU pin connected to the main push button (D2 for Witty Cloud). The code below assumes the button is pulled high (HIGH == OFF)
-const int BUILTINLED = 2;                // MCU pin connected to the built-in LED (D4 for Witty Cloud). The code below assumes the LED is pulled high (HIGH == OFF)
-
-// Normally no need to change below this line
-const char *APPNAME = "ESP8266 Yeelight Switch";
-const char *APPVERSION = "2.0beta";
-const char *APPURL = "https://github.com/denis-stepanov/esp8266-yeelight-switch";
-const unsigned int BAUDRATE = 115200;     // Serial connection speed
 
 // Yeelight protocol; see https://www.yeelight.com/en_US/developer
 const char *YL_MSG_TOGGLE = "{\"id\":1,\"method\":\"toggle\",\"params\":[]}\r\n";
@@ -152,6 +155,40 @@ int YBulb::Temperature(WiFiClient &wfc, int temperature) const {
     return -1;
 }
 
+// Return timestamp in gmag11/NtpClient style (hh:mm:ss dd/mm/yyyy")
+// Unfortunately, AceTime does not provide a function to return a DateTime string (printTo() is considered as a debugging option)
+String AceDateTimeString(ZonedDateTime &dt) {
+  String str;
+  if (dt.isError())
+    str = "--:--:-- --/--/----";
+  else {
+
+    // Unfortunately, String class cannot zero-pad
+    if (dt.hour() < 10)
+      str += "0";
+    str += dt.hour();
+    str += ":";
+    if (dt.minute() < 10)
+      str += "0";
+    str += dt.minute();
+    str += ":";
+    if (dt.second() < 10)
+      str += "0";
+    str += dt.second();
+    str += " ";
+    if (dt.day() < 10)
+      str += "0";
+    str += dt.day();
+    str += "/";
+    if (dt.month() < 10)
+      str += "0";
+    str += dt.month();
+    str += "/";
+    str += dt.year();
+  }
+  return str;
+}
+
 // Logger class. TODO: make a library out of this
 const char *LOGFILENAME = "/log.txt";
 const char *LOGFILENAME2 = "/log2.txt";
@@ -165,43 +202,49 @@ class Logger {
     bool enabled;
     size_t logSize;
     size_t logSizeMax;
+    SystemClock *clock;
+    TimeZone *timeZone;
   public:
-    Logger();
-    ~Logger();
-    bool isEnabled() const { return enabled; };
+    Logger(SystemClock *clk = nullptr, TimeZone *tz = nullptr): logSize(0), logSizeMax(0), clock(clk), timeZone(tz) {};
+    ~Logger() { end(); };
+    bool begin();
+    bool end();
+    bool isEnabled() const { return logSizeMax; };
     void writeln(const char *);
     void writeln(const String &);
     void rotate();
 };
 
-//// Initialize logger
-Logger::Logger() {
-  enabled = SPIFFS.begin();
-  if (enabled) {
+//// Start logging activities
+bool Logger::begin() {
+  if (SPIFFS.begin()) {       // TODO: make this work with SPIFFS already initialized
     FSInfo fsi;
     SPIFFS.info(fsi);
     if (fsi.totalBytes > LOGSLACK)
       logSizeMax = (fsi.totalBytes - LOGSLACK) / 2 < LOGSIZEMAX ? (fsi.totalBytes - LOGSLACK) / 2 : LOGSIZEMAX;
     else {
-      enabled = false;
+      SPIFFS.end();
       logSize = 0;
       logSizeMax = 0;
     }
     logFile = SPIFFS.open(LOGFILENAME, "a");
     if (!logFile) {
       SPIFFS.end();
-      enabled = false;
       logSize = 0;
       logSizeMax = 0;
     } else
       logSize = logFile.size();
   }
+  return logSizeMax;
 }
 
-//// Terminate logger
-Logger::~Logger() {
+//// Finish logging activities
+bool Logger::end() {
   logFile.close();
   SPIFFS.end();
+  logSize = 0;
+  logSizeMax = 0;
+  return true;
 }
 
 //// Write a line to a log
@@ -211,9 +254,12 @@ void Logger::writeln(const char *line) {
 
 //// Write a line to a log
 void Logger::writeln(const String &line) {
-  if (enabled) {
-    const String timestamp = "--:--:-- --/--/---- "; // TODO NTP
-    String msg = timestamp + line;
+  if (logSizeMax) {
+    String msg;
+    ZonedDateTime dt = clock && timeZone ? ZonedDateTime::forEpochSeconds(clock->getNow(), *timeZone) : ZonedDateTime::forError();
+    msg += AceDateTimeString(dt);
+    msg += " ";
+    msg += line;
     logFile.println(msg);
     logFile.flush();
     logSize += msg.length();
@@ -222,15 +268,16 @@ void Logger::writeln(const String &line) {
 
 //// Check log size and rotate if needed
 void Logger::rotate() {
-  if (enabled && logSize >= logSizeMax) {
+  if (logSize > logSizeMax) {
     Serial.printf("Max log size (%u) reached, rotating...\n", logSizeMax);
     logFile.close();
     SPIFFS.remove(LOGFILENAME2);          // Rename will fail if file exists
     SPIFFS.rename(LOGFILENAME, LOGFILENAME2);
+    logSize = 0;
     logFile = SPIFFS.open(LOGFILENAME, "a");
     if(!logFile) {
-      enabled = false;
-      Serial.println("Log rotation failed");
+      end();
+      Serial.println("Log rotation failed; disabling logging");
     }
   }
 }
@@ -254,7 +301,15 @@ const uint16_t CONNECTION_TIMEOUT = 1000U;  // Bulb connection timeout (ms)
 LinkedList<YBulb *> bulbs;          // List of known bulbs
 uint8_t nabulbs = 0;                // Number of active bulbs
 
-Logger logger;
+#define ACETIME_TZ_NX(tz) zonedb::kZone##tz
+#define ACETIME_TZ(tz) ACETIME_TZ_NX(tz)          // Preprocessor trick needed to expand the macro before concatenation
+BasicZoneProcessor zoneProcessor;
+TimeZone timeZone;
+NtpClock ntpClock("pool.ntp.org");  // Somehow, the default pool in AceTime is USA; so reset it
+SystemClockLoop sysClock(&ntpClock, nullptr);
+bool sysClockIsInit = false;
+
+Logger logger(&sysClock, &timeZone);              // Event logger
 
 const char *COMPILATION_TIMESTAMP = __DATE__ " " __TIME__;
 
@@ -733,7 +788,8 @@ void setup(void) {
   pinMode (CLK,INPUT);
   pinMode (DT,INPUT);
   pinMode (SW, INPUT);
-  rotation = digitalRead(CLK);   
+  rotation = digitalRead(CLK);
+  logger.begin();
   String msg = "booted: ";
   msg += APPNAME;
   msg += " v";
@@ -801,6 +857,11 @@ void setup(void) {
     Serial.println("Connection timeout");
     logger.writeln("Wi-Fi connection timeout on boot");
  }
+
+  // Setup clock
+  timeZone = TimeZone::forZoneInfo(&ACETIME_TZ(TIMEZONE), &zoneProcessor);
+  ntpClock.setup();
+  sysClock.setup();
 
   // Run discovery
   yl_discover();
@@ -937,6 +998,7 @@ void loop(void) {
       led.Update();
       server.handleClient();
       MDNS.update();
+      sysClock.loop();
       logger.rotate();
     }
     button_double_clicked = false;
@@ -967,7 +1029,7 @@ void loop(void) {
         // This is not included in ESP8266 Core (https://github.com/esp8266/Arduino/issues/922), but is available as a separate library (like ESPAsyncTCP)
         // Since, for this project, it is a minor issue (flip being sent to bulbs with 100 ms delay), we stay with blocking connect()
         led.On().Update();
-        delay(BLINK_DELAY);       // 1 blink
+        delay(BLINK_DELAY);       // 1 blink. Note that using delay() inside loop() may skew sysClock, as per AceTime documentation
         led.Off().Update();
 
         if (yl_flip())
@@ -985,10 +1047,18 @@ void loop(void) {
     }
   }
 
+  // Report initial NTP synchronization event
+  if (sysClockIsInit != sysClock.isInit()) {
+    sysClockIsInit = sysClock.isInit();
+    if (sysClockIsInit)
+      logger.writeln("System clock synchronized with NTP");
+  }
+
   // Background processing
   button.check();
   led.Update();
   server.handleClient();
   MDNS.update();
+  sysClock.loop();
   logger.rotate();
 }
