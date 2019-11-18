@@ -22,6 +22,8 @@
 #include <AceButton.h>        // https://github.com/bxparks/AceButton
 #include <AceTime.h>          // https://github.com/bxparks/AceTime
 #include <LinkedList.h>       // https://github.com/ivanseidel/LinkedList
+#include <Bounce2.h>
+#include <EncoderStepCounter.h>
 
 // Configuration
 const char *HOSTNAME = "ybutton1";        // <hostname>.local of the button in the local network. Also SSID of the temporary network for Wi-Fi configuration
@@ -45,14 +47,29 @@ int DT = 5;  // Pin 8 to DT on encoder
 int SW = 0;
 int RotPosition = 0;
 int LastPosition;
-int RotPosition_temperature = 1700;
-int LastPosition_temperature;
+float RotPosition_temperature = 8.5;
+float LastPosition_temperature = 8.5;
+int RotPosition_color = 0;
+int LastPosition_color = 0;
 int rotation;
-int rotation_temperature;
+float rotation_temperature;
+int rotation_color = 0;
 int value;
-int value_temperature;
+float value_temperature;
+int value_color;
 boolean LeftRight;
 boolean LeftRight_temperature;
+boolean LeftRight_color;
+boolean first_loop = true;
+int color_r = 0;
+int color_g = 0;
+int color_b = 0;
+int color_int = 0;
+int rgb_colors[27] = {0, 127, 255, 32512, 32639, 32767, 65280, 65407, 65535, 8323072, 8323199, 8323327, 8355584, 8355711, 8355839, 8388352, 8388479, 8388607, 16711680, 16711807, 16711935, 16744192, 16744319, 16744447, 16776960, 16777087, 16777215};
+
+EncoderStepCounter encoder(CLK, DT);
+EncoderStepCounter encoder_temperature(CLK, DT);
+EncoderStepCounter encoder_color(CLK, DT);
 
 // Yeelight protocol; see https://www.yeelight.com/en_US/developer
 const char *YL_MSG_TOGGLE = "{\"id\":1,\"method\":\"toggle\",\"params\":[]}\r\n";
@@ -108,6 +125,9 @@ class YBulb {
     int Flip(WiFiClient&) const;
     int Bright(WiFiClient&, int level) const;
     int Temperature(WiFiClient&, int temperature) const;
+    int Color(WiFiClient&, int color) const;
+    int MusicOn(WiFiClient&) const;
+    int MusicOff(WiFiClient&) const;
     bool operator==(const char *id2) const {
       return !strcmp(id, id2);
     }
@@ -169,6 +189,45 @@ int YBulb::Temperature(WiFiClient &wfc, int temperature) const {
     String bulb_method2 = bulb_method + ", \"sudden\", 100]}\r\n";
     Serial.print(bulb_method2.c_str());
     wfc.print(bulb_method2.c_str());
+    wfc.stop();
+    return 0;
+  } else
+    return -1;
+}
+
+int YBulb::Color(WiFiClient &wfc, int color) const {
+  String color_string = String(color);
+  if (wfc.connect(ip, port)) {
+    String bulb_method = "{\"id\":1,\"method\":\"set_rgb\",\"params\":[" + color_string;
+    String bulb_method2 = bulb_method + ", \"sudden\", 100]}\r\n";
+    Serial.print(bulb_method2.c_str());
+    wfc.print(bulb_method2.c_str());
+    wfc.stop();
+    return 0;
+  } else
+    return -1;
+}
+
+int YBulb::MusicOn(WiFiClient &wfc) const {
+  int ip_adress = WiFi.localIP();
+  Serial.println(WiFi.localIP());
+  String ip_string = String("192.168.1.119");
+  if (wfc.connect(ip, port)) {
+    String bulb_method = "{\"id\":1,\"method\":\"set_music\",\"params\":[1, \"" + ip_string;
+    String bulb_method2 = bulb_method + "\", 32]}\r\n";
+    Serial.print(bulb_method2.c_str());
+    wfc.print(bulb_method2.c_str());
+    wfc.stop();
+    return 0;
+  } else
+    return -1;
+}
+
+int YBulb::MusicOff(WiFiClient &wfc) const {
+  if (wfc.connect(ip, port)) {
+    String bulb_method = "{\"id\":1,\"method\":\"set_music\",\"params\":[0]}\r\n";
+    Serial.print(bulb_method.c_str());
+    wfc.print(bulb_method.c_str());
     wfc.stop();
     return 0;
   } else
@@ -313,6 +372,10 @@ const unsigned long GLOW_DELAY = 1000UL;    // (ms)
 AceButton button(PUSHBUTTON);
 bool button_pressed = false;
 bool button_double_clicked = false;
+bool button_long_clicked = false;
+//
+//WiFiServer serverTCP(5045);
+//WiFiClient clientTCP;
 
 WiFiClient client;                  // Client used to talk to a bulb
 WiFiUDP udp;                        // UDP socket used for discovery process
@@ -351,10 +414,17 @@ void handleButtonEvent(AceButton* /* button */, uint8_t eventType, uint8_t /* bu
     case AceButton::kEventReleased:
       button_pressed = eventType == AceButton::kEventReleased;
       break;
+    case AceButton::kEventLongPressed:
+      Serial.println("Long clicked");
+      button_long_clicked = true;
+      break;
 
   }
 
 }
+
+Bounce debouncer_CLK = Bounce();
+Bounce debouncer_DT = Bounce();
 
 // Yeelight discovery. Note - no bulb removal at the moment
 void yl_discover(void) {
@@ -495,13 +565,80 @@ int yl_bright(int level) {
 
 
 // Set temperature
-int yl_temperature(int temperature) {
+int yl_temperature(float temperature) {
   int ret = 0;
   if (nabulbs) {
     for (uint8_t i = 0; i < bulbs.size(); i++) {
       YBulb *bulb = bulbs.get(i);
       if (bulb->isActive()) {
         if (bulb->Temperature(client, temperature)) {
+          Serial.printf("Bulb connection to %s failed\n", bulb->GetIP());
+          ret = -2;
+          yield();        // Connection timeout is lenghty; allow for background processing (is this really needed?)
+        } else
+          Serial.printf("Bulb %d toggle sent\n", i + 1);
+      }
+    }
+  } else {
+    Serial.println("No linked bulbs found");
+    ret = -1;
+  }
+  return ret;
+}
+
+// Set color
+int yl_color(int color) {
+  int ret = 0;
+  if (nabulbs) {
+    for (uint8_t i = 0; i < bulbs.size(); i++) {
+      YBulb *bulb = bulbs.get(i);
+      if (bulb->isActive()) {
+        if (bulb->Color(client, color)) {
+          Serial.printf("Bulb connection to %s failed\n", bulb->GetIP());
+          ret = -2;
+          yield();        // Connection timeout is lenghty; allow for background processing (is this really needed?)
+        } else
+          Serial.printf("Bulb %d toggle sent\n", i + 1);
+      }
+    }
+  } else {
+    Serial.println("No linked bulbs found");
+    ret = -1;
+  }
+  return ret;
+}
+
+
+// Set music on
+int yl_music_on() {
+  int ret = 0;
+  if (nabulbs) {
+    for (uint8_t i = 0; i < bulbs.size(); i++) {
+      YBulb *bulb = bulbs.get(i);
+      if (bulb->isActive()) {
+        if (bulb->MusicOn(client)) {
+          Serial.printf("Bulb connection to %s failed\n", bulb->GetIP());
+          ret = -2;
+          yield();        // Connection timeout is lenghty; allow for background processing (is this really needed?)
+        } else
+          Serial.printf("Bulb %d toggle sent\n", i + 1);
+      }
+    }
+  } else {
+    Serial.println("No linked bulbs found");
+    ret = -1;
+  }
+  return ret;
+}
+
+// Set music off
+int yl_music_off() {
+  int ret = 0;
+  if (nabulbs) {
+    for (uint8_t i = 0; i < bulbs.size(); i++) {
+      YBulb *bulb = bulbs.get(i);
+      if (bulb->isActive()) {
+        if (bulb->MusicOff(client)) {
           Serial.printf("Bulb connection to %s failed\n", bulb->GetIP());
           ret = -2;
           yield();        // Connection timeout is lenghty; allow for background processing (is this really needed?)
@@ -809,6 +946,8 @@ void handleLog() {
 // Program setup
 const unsigned long WIFI_CONNECT_TIMEOUT = 20000UL;  // (ms)
 void setup(void) {
+  delay(5000);
+  encoder.begin();
   pinMode (CLK, INPUT);
   pinMode (DT, INPUT);
   pinMode (SW, INPUT);
@@ -844,16 +983,22 @@ void setup(void) {
   ButtonConfig* buttonConfig = button.getButtonConfig();
   buttonConfig->setEventHandler(handleButtonEvent);
   buttonConfig->setFeature(ButtonConfig::kFeatureDoubleClick);
+  buttonConfig->setFeature(ButtonConfig::kFeatureLongPress);
   buttonConfig->setFeature(
     ButtonConfig::kFeatureSuppressClickBeforeDoubleClick);
   buttonConfig->setFeature(ButtonConfig::kFeatureSuppressAfterClick);
+  buttonConfig->setFeature(ButtonConfig::kFeatureSuppressAfterLongPress);
   buttonConfig->setFeature(ButtonConfig::kFeatureSuppressAfterDoubleClick);
-  buttonConfig->setClickDelay(120);
-  buttonConfig->setDoubleClickDelay(220);
+  buttonConfig->setClickDelay(140);
+  buttonConfig->setDoubleClickDelay(240);
 
+  debouncer_CLK.attach(CLK);
+  debouncer_DT.attach(DT);
+  debouncer_CLK.interval(20);
+  debouncer_DT.interval(20);
 
   led.Off().Update();
-
+  delay(15000);
   // Network
   WiFi.mode(WIFI_STA);      // Important to avoid starting with an access point
   WiFi.hostname(HOSTNAME);
@@ -882,17 +1027,21 @@ void setup(void) {
     logger.writeln("Wi-Fi connection timeout on boot");
   }
 
+  
   // Setup clock
   timeZone = TimeZone::forZoneInfo(&ACETIME_TZ(TIMEZONE), &zoneProcessor);
   ntpClock.setup();
   sysClock.setup();
 
   // Run discovery
+  
   yl_discover();
 
   // Load settings from EEPROM
   EEPROM.begin(4);
+//  delay(15000);
   if (EEPROM.read(0) == 'Y' && EEPROM.read(1) == 'B' && EEPROM.read(2) == EEPROM_FORMAT_VERSION) {
+    
     char bulbid_c[YL_ID_LENGTH + 1] = {0,};
     const uint8_t n = EEPROM.read(3);
     Serial.printf("Found %d bulb%s configuration in EEPROM\n", n, n == 1 ? "" : "s");
@@ -938,77 +1087,143 @@ void setup(void) {
   client.setTimeout(CONNECTION_TIMEOUT);
 }
 
+void interrupt() {
+  encoder.tick();
+  encoder_temperature.tick();
+  encoder_color.tick();
+}
+
 // Program loop
 void loop(void) {
-
-  value = digitalRead(CLK);
-  if (value != rotation) { // we use the DT pin to find out which way we turning.
-    if (digitalRead(DT) != value) {  // Clockwise
-      RotPosition += 5;
-      LeftRight = true;
-    } else { //Counterclockwise
-      LeftRight = false;
-      RotPosition -= 5;
-    }
-    if (RotPosition >= 100) {
-      RotPosition = 100;
-    }
-    if (RotPosition <= 0) {
-      RotPosition = 0;
-    }
-    if (RotPosition != LastPosition) {
-      if (LeftRight) { // turning right will turn on red led.
-        Serial.println ("clockwise");
-        LastPosition = RotPosition;
-        yl_bright(RotPosition);
-      } else {       // turning left will turn on green led.
-        Serial.println("counterclockwise");
-        LastPosition = RotPosition;
-        yl_bright(RotPosition);
-      }
-      Serial.print("Encoder RotPosition: ");
-      Serial.println(RotPosition);
-      Serial.println ("clockwise");
-    }
-
+//  
+//  if (first_loop){
+//    delay(5000);
+//    first_loop = false;
+//  }
+  encoder.tick();
+  RotPosition = encoder.getPosition();
+  if (RotPosition >= 10) {
+    RotPosition = 10;
+    encoder.setPosition(10);
   }
-  rotation = value;
+  if (RotPosition <= 0) {
+    RotPosition = 0;
+    encoder.setPosition(0);
+  }
+  if (RotPosition != rotation) {
+    yl_bright(RotPosition*10);
+    Serial.print("Encoder RotPosition: ");
+    Serial.println(RotPosition);
+    Serial.println ("clockwise");
+    rotation = RotPosition;
+  }
 
 
   // Check the button state
   if (button_double_clicked) {
     button_double_clicked = false;
     while (button_double_clicked == false) {
-      value_temperature = digitalRead(CLK);
-      if (value_temperature != rotation_temperature) { // we use the DT pin to find out which way we turning.
-        if (digitalRead(DT) != value_temperature) {  // Clockwise
-          RotPosition_temperature += 200;
-          LeftRight_temperature = true;
-        } else { //Counterclockwise
-          LeftRight_temperature = false;
-          RotPosition_temperature -= 200;
-        }
-        if (RotPosition_temperature >= 6500) {
-          RotPosition_temperature = 6500;
-        }
-        if (RotPosition_temperature <= 1700) {
-          RotPosition_temperature = 1700;
-        }
-        if (RotPosition_temperature != LastPosition_temperature) {
-          if (LeftRight_temperature) { // turning right will turn on red led.
-            Serial.println ("clockwise_temperature");
-            LastPosition_temperature = RotPosition_temperature;
-            yl_temperature(RotPosition_temperature);
-          } else {       // turning left will turn on green led.
-            Serial.println("counterclockwise_temperature");
-            LastPosition_temperature = RotPosition_temperature;
-            yl_temperature(RotPosition_temperature);
+      encoder_temperature.tick();
+      RotPosition_temperature = encoder_temperature.getPosition();
+      if (RotPosition_temperature >= 33) {
+        RotPosition_temperature = 33;
+        encoder_temperature.setPosition(33);
+      }
+      if (RotPosition_temperature <= 8.5) {
+        RotPosition_temperature = 8.5;
+        encoder_temperature.setPosition(8.5);
+      }
+      if (RotPosition_temperature != rotation_temperature) {
+        yl_temperature(RotPosition_temperature*200);
+        Serial.print("Encoder RotPosition_temperature: ");
+        Serial.println(RotPosition_temperature);
+        Serial.println ("clockwise");
+        rotation_temperature = RotPosition_temperature;
+      }
+              
+      if (button_pressed) {
+        button_pressed = false;
+        Serial.println("Button pressed");
+        logger.writeln("Button pressed");
+        led.On().Update();
+        delay(BLINK_DELAY);       // 1 blink
+        led.Off().Update();
+    
+        // LED diagnostics:
+        // 1 blink  - light flip OK
+        // 1 + 2 blinks - one of the bulbs did not respond
+        // 2 blinks - button not linked to bulbs
+        // 1 glowing - Wi-Fi disconnected
+        if (WiFi.status() != WL_CONNECTED) {
+    
+          // No Wi-Fi
+          Serial.println("No Wi-Fi connection");
+          led.Breathe(GLOW_DELAY).Repeat(1);            // 1 glowing
+        } else {
+          if (nabulbs) {
+    
+            // Flipping may block, causing JLED-style blink not being properly processed. Hence, force sequential processing (first blink, then flip)
+            // To make JLED working smoothly in this case, an asynchronous WiFiClient.connect() method would be needed
+            // This is not included in ESP8266 Core (https://github.com/esp8266/Arduino/issues/922), but is available as a separate library (like ESPAsyncTCP)
+            // Since, for this project, it is a minor issue (flip being sent to bulbs with 100 ms delay), we stay with blocking connect()
+            led.On().Update();
+            delay(BLINK_DELAY);       // 1 blink. Note that using delay() inside loop() may skew sysClock, as per AceTime documentation
+            led.Off().Update();
+    
+            if (yl_flip())
+    
+              // Some bulbs did not respond
+              // Because of connection timeout, the blinking will be 1 + pause + 2
+              led.Blink(BLINK_DELAY, BLINK_DELAY * 2).Repeat(2);  // 2 blinks
+    
+          } else {
+    
+            // Button not linked
+            Serial.println("Button not linked to bulbs");
+            led.Blink(BLINK_DELAY, BLINK_DELAY * 2).Repeat(2);    // 2 blinks
           }
-          Serial.print("Encoder RotPosition_temperature: ");
-          Serial.println(RotPosition_temperature);
-          Serial.println ("clockwise_temperature");
         }
+      }
+    
+      // Report initial NTP synchronization event
+      if (sysClockIsInit != sysClock.isInit()) {
+        sysClockIsInit = sysClock.isInit();
+        if (sysClockIsInit)
+          logger.writeln("System clock synchronized with NTP");
+      }
+      button.check();
+      led.Update();
+      server.handleClient();
+      MDNS.update();
+      sysClock.loop();
+      logger.rotate();
+    }
+    button_double_clicked = false;
+  }
 
+
+
+    // Check the button state
+  if (button_long_clicked) {
+    button_long_clicked = false;
+    yl_color(rgb_colors[RotPosition_color]);
+    while (button_long_clicked == false) {
+      encoder_color.tick();
+      RotPosition_color = encoder_color.getPosition();
+      if (RotPosition_color >= 26) {
+        RotPosition_color = 26;
+        encoder_color.setPosition(26);
+      }
+      if (RotPosition_color <= 0) {
+        RotPosition_color = 0;
+        encoder_color.setPosition(0);
+      }
+      if (RotPosition_color != rotation_color) {
+        yl_color(rgb_colors[RotPosition_color]);
+        Serial.print("Encoder RotPosition_color: ");
+        Serial.println(rgb_colors[RotPosition_color]);
+        Serial.println ("clockwise_color");
+        rotation_color = RotPosition_color;
       }
 
           
@@ -1063,7 +1278,7 @@ void loop(void) {
           logger.writeln("System clock synchronized with NTP");
       }
       
-      rotation_temperature = value_temperature;
+//      rotation_color = value_color;
       button.check();
       led.Update();
       server.handleClient();
@@ -1071,8 +1286,11 @@ void loop(void) {
       sysClock.loop();
       logger.rotate();
     }
-    button_double_clicked = false;
+    button_long_clicked = false;
+    yl_temperature(RotPosition_temperature*200);
   }
+
+  
   if (button_pressed) {
     button_pressed = false;
     Serial.println("Button pressed");
