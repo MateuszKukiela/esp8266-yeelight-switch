@@ -124,6 +124,7 @@ class YBulb {
     }
     int Flip(WiFiClient&) const;
     int Bright(WiFiClient&, int level) const;
+    int BlinkBulb(WiFiClient&) const;
     int Temperature(WiFiClient&, int temperature) const;
     int Color(WiFiClient&, int color) const;
     int MusicOn(WiFiClient&) const;
@@ -176,6 +177,17 @@ int YBulb::Bright(WiFiClient &wfc, int level) const {
     String bulb_method2 = bulb_method + "]}\r\n";
     Serial.print(bulb_method2.c_str());
     wfc.print(bulb_method2.c_str());
+    wfc.stop();
+    return 0;
+  } else
+    return -1;
+}
+
+int YBulb::BlinkBulb(WiFiClient &wfc) const {
+  if (wfc.connect(ip, port)) {
+    String bulb_method = "{\"id\":1,\"method\":\"set_bright\",\"params\":[";
+    Serial.print(bulb_method.c_str());
+    wfc.print(bulb_method.c_str());
     wfc.stop();
     return 0;
   } else
@@ -944,7 +956,7 @@ void handleLog() {
 }
 
 // Program setup
-const unsigned long WIFI_CONNECT_TIMEOUT = 20000UL;  // (ms)
+const unsigned long WIFI_CONNECT_TIMEOUT = 200000UL;  // (ms)
 void setup(void) {
   delay(5000);
   encoder.begin();
@@ -1027,21 +1039,21 @@ void setup(void) {
     logger.writeln("Wi-Fi connection timeout on boot");
   }
 
-  
+
   // Setup clock
   timeZone = TimeZone::forZoneInfo(&ACETIME_TZ(TIMEZONE), &zoneProcessor);
   ntpClock.setup();
   sysClock.setup();
 
   // Run discovery
-  
+
   yl_discover();
 
   // Load settings from EEPROM
   EEPROM.begin(4);
-//  delay(15000);
+  //  delay(15000);
   if (EEPROM.read(0) == 'Y' && EEPROM.read(1) == 'B' && EEPROM.read(2) == EEPROM_FORMAT_VERSION) {
-    
+
     char bulbid_c[YL_ID_LENGTH + 1] = {0,};
     const uint8_t n = EEPROM.read(3);
     Serial.printf("Found %d bulb%s configuration in EEPROM\n", n, n == 1 ? "" : "s");
@@ -1095,11 +1107,11 @@ void interrupt() {
 
 // Program loop
 void loop(void) {
-//  
-//  if (first_loop){
-//    delay(5000);
-//    first_loop = false;
-//  }
+  //
+  //  if (first_loop){
+  //    delay(5000);
+  //    first_loop = false;
+  //  }
   encoder.tick();
   RotPosition = encoder.getPosition();
   if (RotPosition >= 10) {
@@ -1111,7 +1123,7 @@ void loop(void) {
     encoder.setPosition(0);
   }
   if (RotPosition != rotation) {
-    yl_bright(RotPosition*10);
+    yl_bright(RotPosition * 10);
     Serial.print("Encoder RotPosition: ");
     Serial.println(RotPosition);
     Serial.println ("clockwise");
@@ -1120,9 +1132,9 @@ void loop(void) {
 
 
   // Check the button state
-  if (button_double_clicked) {
-    button_double_clicked = false;
-    while (button_double_clicked == false) {
+  if (button_long_clicked) {
+    button_long_clicked = false;
+    while (button_long_clicked == false) {
       encoder_temperature.tick();
       RotPosition_temperature = encoder_temperature.getPosition();
       if (RotPosition_temperature >= 33) {
@@ -1134,13 +1146,13 @@ void loop(void) {
         encoder_temperature.setPosition(8.5);
       }
       if (RotPosition_temperature != rotation_temperature) {
-        yl_temperature(RotPosition_temperature*200);
+        yl_temperature(RotPosition_temperature * 200);
         Serial.print("Encoder RotPosition_temperature: ");
         Serial.println(RotPosition_temperature);
         Serial.println ("clockwise");
         rotation_temperature = RotPosition_temperature;
       }
-              
+
       if (button_pressed) {
         button_pressed = false;
         Serial.println("Button pressed");
@@ -1148,20 +1160,20 @@ void loop(void) {
         led.On().Update();
         delay(BLINK_DELAY);       // 1 blink
         led.Off().Update();
-    
+
         // LED diagnostics:
         // 1 blink  - light flip OK
         // 1 + 2 blinks - one of the bulbs did not respond
         // 2 blinks - button not linked to bulbs
         // 1 glowing - Wi-Fi disconnected
         if (WiFi.status() != WL_CONNECTED) {
-    
+
           // No Wi-Fi
           Serial.println("No Wi-Fi connection");
           led.Breathe(GLOW_DELAY).Repeat(1);            // 1 glowing
         } else {
           if (nabulbs) {
-    
+
             // Flipping may block, causing JLED-style blink not being properly processed. Hence, force sequential processing (first blink, then flip)
             // To make JLED working smoothly in this case, an asynchronous WiFiClient.connect() method would be needed
             // This is not included in ESP8266 Core (https://github.com/esp8266/Arduino/issues/922), but is available as a separate library (like ESPAsyncTCP)
@@ -1169,22 +1181,22 @@ void loop(void) {
             led.On().Update();
             delay(BLINK_DELAY);       // 1 blink. Note that using delay() inside loop() may skew sysClock, as per AceTime documentation
             led.Off().Update();
-    
+
             if (yl_flip())
-    
+
               // Some bulbs did not respond
               // Because of connection timeout, the blinking will be 1 + pause + 2
               led.Blink(BLINK_DELAY, BLINK_DELAY * 2).Repeat(2);  // 2 blinks
-    
+
           } else {
-    
+
             // Button not linked
             Serial.println("Button not linked to bulbs");
             led.Blink(BLINK_DELAY, BLINK_DELAY * 2).Repeat(2);    // 2 blinks
           }
         }
       }
-    
+
       // Report initial NTP synchronization event
       if (sysClockIsInit != sysClock.isInit()) {
         sysClockIsInit = sysClock.isInit();
@@ -1198,16 +1210,16 @@ void loop(void) {
       sysClock.loop();
       logger.rotate();
     }
-    button_double_clicked = false;
+    button_long_clicked = false;
   }
 
 
 
-    // Check the button state
-  if (button_long_clicked) {
-    button_long_clicked = false;
+  // Check the button state
+  if (button_double_clicked) {
+    button_double_clicked = false;
     yl_color(rgb_colors[RotPosition_color]);
-    while (button_long_clicked == false) {
+    while (button_double_clicked == false) {
       encoder_color.tick();
       RotPosition_color = encoder_color.getPosition();
       if (RotPosition_color >= 26) {
@@ -1226,7 +1238,7 @@ void loop(void) {
         rotation_color = RotPosition_color;
       }
 
-          
+
       if (button_pressed) {
         button_pressed = false;
         Serial.println("Button pressed");
@@ -1234,20 +1246,20 @@ void loop(void) {
         led.On().Update();
         delay(BLINK_DELAY);       // 1 blink
         led.Off().Update();
-    
+
         // LED diagnostics:
         // 1 blink  - light flip OK
         // 1 + 2 blinks - one of the bulbs did not respond
         // 2 blinks - button not linked to bulbs
         // 1 glowing - Wi-Fi disconnected
         if (WiFi.status() != WL_CONNECTED) {
-    
+
           // No Wi-Fi
           Serial.println("No Wi-Fi connection");
           led.Breathe(GLOW_DELAY).Repeat(1);            // 1 glowing
         } else {
           if (nabulbs) {
-    
+
             // Flipping may block, causing JLED-style blink not being properly processed. Hence, force sequential processing (first blink, then flip)
             // To make JLED working smoothly in this case, an asynchronous WiFiClient.connect() method would be needed
             // This is not included in ESP8266 Core (https://github.com/esp8266/Arduino/issues/922), but is available as a separate library (like ESPAsyncTCP)
@@ -1255,30 +1267,30 @@ void loop(void) {
             led.On().Update();
             delay(BLINK_DELAY);       // 1 blink. Note that using delay() inside loop() may skew sysClock, as per AceTime documentation
             led.Off().Update();
-    
+
             if (yl_flip())
-    
+
               // Some bulbs did not respond
               // Because of connection timeout, the blinking will be 1 + pause + 2
               led.Blink(BLINK_DELAY, BLINK_DELAY * 2).Repeat(2);  // 2 blinks
-    
+
           } else {
-    
+
             // Button not linked
             Serial.println("Button not linked to bulbs");
             led.Blink(BLINK_DELAY, BLINK_DELAY * 2).Repeat(2);    // 2 blinks
           }
         }
       }
-    
+
       // Report initial NTP synchronization event
       if (sysClockIsInit != sysClock.isInit()) {
         sysClockIsInit = sysClock.isInit();
         if (sysClockIsInit)
           logger.writeln("System clock synchronized with NTP");
       }
-      
-//      rotation_color = value_color;
+
+      //      rotation_color = value_color;
       button.check();
       led.Update();
       server.handleClient();
@@ -1286,11 +1298,11 @@ void loop(void) {
       sysClock.loop();
       logger.rotate();
     }
-    button_long_clicked = false;
-    yl_temperature(RotPosition_temperature*200);
+    button_double_clicked = false;
+    yl_temperature(RotPosition_temperature * 200);
   }
 
-  
+
   if (button_pressed) {
     button_pressed = false;
     Serial.println("Button pressed");
