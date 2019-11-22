@@ -55,8 +55,11 @@ int rotation;
 float rotation_temperature;
 int rotation_color = 0;
 int value;
+String line = "dupa";
+int night = 0;
 float value_temperature;
 int value_color;
+int temp_pos = 0;
 boolean LeftRight;
 boolean LeftRight_temperature;
 boolean LeftRight_color;
@@ -125,6 +128,7 @@ class YBulb {
     int Flip(WiFiClient&) const;
     int Bright(WiFiClient&, int level) const;
     int BlinkBulb(WiFiClient&) const;
+    int NightMode(WiFiClient&) const;
     int Temperature(WiFiClient&, int temperature) const;
     int Color(WiFiClient&, int color) const;
     int MusicOn(WiFiClient&) const;
@@ -188,6 +192,26 @@ int YBulb::BlinkBulb(WiFiClient &wfc) const {
     String bulb_method = "{\"id\":1,\"method\":\"set_bright\",\"params\":[";
     Serial.print(bulb_method.c_str());
     wfc.print(bulb_method.c_str());
+    wfc.stop();
+    return 0;
+  } else
+    return -1;
+}
+
+int YBulb::NightMode(WiFiClient &wfc) const {
+  if (wfc.connect(ip, port)) {
+    Serial.print("XDDDDDD");
+    String bulb_prop = "{\"id\":1,\"method\":\"get_prop\",\"params\":[\"power\"]}\r\n";
+    wfc.print(bulb_prop);
+    Serial.print(bulb_prop);
+//    delay(400);
+    line = wfc.readStringUntil('}');
+    Serial.println(line);
+    if (line.equals("{\"id\":1, \"result\":[\"off\"]")) {
+      Serial.println("OFF");
+      Serial.println("\n");
+      return 1;
+    }
     wfc.stop();
     return 0;
   } else
@@ -576,789 +600,822 @@ int yl_bright(int level) {
 }
 
 
-// Set temperature
-int yl_temperature(float temperature) {
-  int ret = 0;
-  if (nabulbs) {
+int yl_night_mode() {
     for (uint8_t i = 0; i < bulbs.size(); i++) {
       YBulb *bulb = bulbs.get(i);
       if (bulb->isActive()) {
-        if (bulb->Temperature(client, temperature)) {
-          Serial.printf("Bulb connection to %s failed\n", bulb->GetIP());
-          ret = -2;
-          yield();        // Connection timeout is lenghty; allow for background processing (is this really needed?)
-        } else
-          Serial.printf("Bulb %d toggle sent\n", i + 1);
-      }
-    }
-  } else {
-    Serial.println("No linked bulbs found");
-    ret = -1;
-  }
-  return ret;
-}
-
-// Set color
-int yl_color(int color) {
-  int ret = 0;
-  if (nabulbs) {
-    for (uint8_t i = 0; i < bulbs.size(); i++) {
-      YBulb *bulb = bulbs.get(i);
-      if (bulb->isActive()) {
-        if (bulb->Color(client, color)) {
-          Serial.printf("Bulb connection to %s failed\n", bulb->GetIP());
-          ret = -2;
-          yield();        // Connection timeout is lenghty; allow for background processing (is this really needed?)
-        } else
-          Serial.printf("Bulb %d toggle sent\n", i + 1);
-      }
-    }
-  } else {
-    Serial.println("No linked bulbs found");
-    ret = -1;
-  }
-  return ret;
-}
+        YBulb *bulb = bulbs.get(i);
+        Serial.print("3");
+        int state = bulb->NightMode(client);
+        Serial.print("STATE: ");
+        Serial.print(state);
+        Serial.print("\n");
+        return state;
+  }}}
 
 
-// Set music on
-int yl_music_on() {
-  int ret = 0;
-  if (nabulbs) {
-    for (uint8_t i = 0; i < bulbs.size(); i++) {
-      YBulb *bulb = bulbs.get(i);
-      if (bulb->isActive()) {
-        if (bulb->MusicOn(client)) {
-          Serial.printf("Bulb connection to %s failed\n", bulb->GetIP());
-          ret = -2;
-          yield();        // Connection timeout is lenghty; allow for background processing (is this really needed?)
-        } else
-          Serial.printf("Bulb %d toggle sent\n", i + 1);
-      }
-    }
-  } else {
-    Serial.println("No linked bulbs found");
-    ret = -1;
-  }
-  return ret;
-}
-
-// Set music off
-int yl_music_off() {
-  int ret = 0;
-  if (nabulbs) {
-    for (uint8_t i = 0; i < bulbs.size(); i++) {
-      YBulb *bulb = bulbs.get(i);
-      if (bulb->isActive()) {
-        if (bulb->MusicOff(client)) {
-          Serial.printf("Bulb connection to %s failed\n", bulb->GetIP());
-          ret = -2;
-          yield();        // Connection timeout is lenghty; allow for background processing (is this really needed?)
-        } else
-          Serial.printf("Bulb %d toggle sent\n", i + 1);
-      }
-    }
-  } else {
-    Serial.println("No linked bulbs found");
-    ret = -1;
-  }
-  return ret;
-}
-
-
-// Return number of active bulbs
-uint8_t yl_nabulbs(void) {
-  uint8_t n = 0;
-  for (uint8_t i = 0; i < bulbs.size(); i++)
-    if (bulbs.get(i)->isActive())
-      n++;
-  return n;
-}
-
-// Web server configuration pages
-// Root page. Show status
-void handleRoot() {
-  String page = "<html><head><title>";
-  page += HOSTNAME;
-  page += "</title></head><body><h3>Yeelight Button</h3>";
-  if (nabulbs) {
-    page += "<p>Linked to the bulb";
-    if (nabulbs > 1)
-      page += "s";
-    page += ":</p><p><ul>";
-    for (uint8_t i = 0; i < bulbs.size(); i++) {
-      YBulb *bulb = bulbs.get(i);
-      if (bulb->isActive()) {
-        page += "<li>id(";
-        page += bulb->GetID();
-        page += "), ip(";
-        page += bulb->GetIP();
-        page += "), name(";
-        page += bulb->GetName();
-        page += "), model(";
-        page += bulb->GetModel();
-        page += ")</li>";
-      }
-    }
-    page += "</ul></p>";
-  } else
-    page += "<p>Not linked to a bulb</p>";
-  page += "<p>[<a href=\"conf\">Change</a>]";
-  if (nabulbs)
-    page += " [<a href=\"flip\">Flip</a>]";
-  page += " [<a href=\"log\">Log</a>]";
-  page += "</p><hr/><p><i>Connected to network ";
-  page += WiFi.SSID();
-  page += ", hostname ";
-  page += HOSTNAME;
-  page += ".local (";
-  page += WiFi.localIP().toString();
-  page += "), RSSI ";
-  page += WiFi.RSSI();
-  page += " dBm.</i></p>";
-  page += "<p><small><a href=\"";
-  page += APPURL;
-  page += "\">";
-  page += APPNAME;
-  page += "</a> v";
-  page += APPVERSION;
-  page += " build ";
-  page += COMPILATION_TIMESTAMP;
-  page += "</small></p>";
-  page += "</body></html>";
-  server.send(200, "text/html", page);
-}
-
-// Bulb discovery page
-void handleConf() {
-  String page = "<html><head><title>";
-  page += HOSTNAME;
-  page += " conf</title></head><body><h3>Yeelight Button Configuration</h3>";
-  page += "<p>[<a href=\"/conf\">Rescan</a>] [<a href=\"/save\">Unlink</a>] [<a href=\"..\">Back</a>]</p>";
-  page += "<p><i>Scanning ";
-  page += WiFi.SSID();
-  page += " for Yeelight devices...</i></p>";
-  page += "<p><i>Hint: turn all bulbs off, except the desired ones, in order to identify them easily.</i></p>";
-
-  // Use chunked transfer to show scan in progress. Works in Chrome, not so well in Firefox
-  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-  server.send(200, "text/html", page);
-  yl_discover();
-  page = "<p>Found ";
-  page += bulbs.size();
-  page += " bulb";
-  if (bulbs.size() != 1)
-    page += "s";
-  page += ". Select bulbs to link from the list below.</p>";
-  page += "<form action=\"/save\"><p style=\"font-family: monospace;\">";
-  for (uint8_t i = 0; i < bulbs.size(); i++) {
-    YBulb *bulb = bulbs.get(i);
-    page += "<input type=\"checkbox\" name=\"bulb\" value=\"";
-    page += i;
-    page += "\"";
-    if (bulb->isActive())
-      page += " checked";
-    page += "/> ";
-    page += bulb->GetIP();
-    page += " id(";
-    page += bulb->GetID();
-    page += ") name(";
-    page += bulb->GetName();
-    page += ") model(";
-    page += bulb->GetModel();
-    page += ") power(";
-    page += bulb->GetPower() ? "<b>on</b>" : "off";
-    page += ")<br/>";
-  }
-  page += "</p><p><input type=\"submit\" value=\"Link\"/></p></form></body></html>";
-  server.sendContent(page);
-  server.sendContent("");
-  server.client().stop();   // Terminate chunked transfer
-}
-
-// Configuration saving page
-// EEPROM format:
-//   0-1: 'YB' - Yeelight Bulb configuration marker
-//     2: format version. Increment each time the format changes
-//     3: number of stored bulbs
-//  4-22: <selected bulb ID> (19 bytes, null-terminated)
-//      : ...
-const uint8_t EEPROM_FORMAT_VERSION = 49U;  // The first version of the format stored 1 bulb id right after the marker. ID stars with ASCII '0' == 48
-void handleSave() {
-
-  unsigned int nargs = server.args();
-  const size_t used_eeprom_size = 2 + 1 + 1 + (YL_ID_LENGTH + 1) * nargs;   // TODO: maybe put some constraint on nargs (externally provided parameter)
-  EEPROM.begin(used_eeprom_size);
-  unsigned int eeprom_addr = 4;
-
-  for (uint8_t i = 0; i < bulbs.size(); i++)
-    bulbs.get(i)->Deactivate();
-  nabulbs = 0;
-
-  if (nargs) {
-    for (unsigned int i = 0; i < nargs; i++) {
-      unsigned char n = server.arg(i).c_str()[0] - '0';
-      if (n < bulbs.size()) {
-        YBulb *bulb = bulbs.get(n);
-        char bulbid_c[YL_ID_LENGTH + 1] = {0,};
-        strncpy(bulbid_c, bulb->GetID(), YL_ID_LENGTH);
-        EEPROM.put(eeprom_addr, bulbid_c);
-        eeprom_addr += sizeof(bulbid_c);
-        bulb->Activate();
-      } else
-        Serial.printf("Bulb #%d does not exist\n", n);
-    }
-
-    nabulbs = yl_nabulbs();
+  // Set temperature
+  int yl_temperature(float temperature) {
+    int ret = 0;
     if (nabulbs) {
-
-      // Write the header
-      EEPROM.write(0, 'Y');
-      EEPROM.write(1, 'B');
-      EEPROM.write(2, EEPROM_FORMAT_VERSION);
-      EEPROM.write(3, nabulbs);
-      Serial.printf("%d bulb%s stored in EEPROM, using %u byte(s)\n", nabulbs, nabulbs == 1 ? "" : "s", eeprom_addr);
-    } else
-      Serial.println("No bulbs were stored in EEPROM");
-  } else {
-
-    // Unlink all
-
-    // Overwriting the EEPROM marker will effectively cause forgetting the settings
-    EEPROM.write(0, 0);
-    Serial.println("Bulbs unlinked from the switch");
-  }
-
-  // TODO: check for errors?
-  EEPROM.commit();
-  EEPROM.end();
-
-  String page = "<html><head><title>";
-  page += HOSTNAME;
-  page += nabulbs || !nargs ? " saved" : " error";
-  page += "</title></head><body><h3>Yeelight Button Configuration ";
-  page += nabulbs || !nargs ?  "Saved" : " Error";
-  page += "</h3>";
-  if (nargs) {
-    if (nabulbs) {
-      page += "<p>";
-      page += nabulbs;
-      page += " bulb";
-      if (nabulbs != 1)
-        page += "s";
-      page += " linked</p>";
-    } else
-      page += "<p>Too many bulbs passed</p>";
-  } else
-    page += "<p>Bulbs unlinked</p>";
-  page += "<p>[<a href=\"..\">Back</a>]</p>";
-  page += "</body></html>";
-  server.send(200, "text/html", page);
-}
-
-// Bulb flip page. Accessing this page immediately flips the light
-void handleFlip() {
-  yl_flip();
-  logger.writeln("Web page flip received");
-
-  String page = "<html><head><title>";
-  page += HOSTNAME;
-  page += " flip</title></head><body><h3>Yeelight Button Flip</h3>";
-  page += nabulbs ? "<p>Light flipped</p>" : "<p>No linked bulbs found</p>";
-  page += "<p>[<a href=\"/flip\">Flip</a>] [<a href=\"..\">Back</a>]</p>";
-  page += "</body></html>";
-  server.send(200, "text/html", page);
-}
-
-// Display log
-const unsigned long LOG_PAGE_SIZE = 2048UL;  // (bytes)
-void handleLog() {
-  Serial.println("Displaying log");
-
-  // Parse query params
-  unsigned int logPage = 0;
-  String logFileName(LOGFILENAME);
-  String logFileParam;
-  for (int i = 0; i < server.args(); i++) {
-    String argname = server.argName(i);
-    if (argname == "p")
-      logPage = String(server.arg(i)).toInt();
-    else {
-      if (argname == "r") {
-        logFileName = LOGFILENAME2;
-        logFileParam = "r=1&";
-      }
-    }
-  }
-
-  String page = "<html><head><title>";
-  page += HOSTNAME;
-  page += " event log</title></head><body><h3>Yeelight Button Event Log</h3>[<a href=\"/\">home</a>] ";
-  if (logger.isEnabled()) {
-    File logFile = SPIFFS.open(logFileName, "r");
-    if (!logFile)
-      page += "<span><br/>File opening error";
-    else {
-      const uint32_t fsize = logFile.size();
-
-      // Print pagination buttons
-      if (fsize > (logPage + 1) * LOG_PAGE_SIZE) {
-        page += "[<a href=\"/log?";
-        page += logFileParam;
-        page += "p=";
-        page += logPage + 1;
-        page += "\">&lt;&lt;</a>]\n";
-      } else {
-        if (logFileName == LOGFILENAME && SPIFFS.exists(LOGFILENAME2))
-          page += "[<a href=\"/log?r=1\">&lt;&lt;</a>]\n";
-        else
-          page += "[&lt;&lt;]\n";
-      }
-      if (logPage) {
-        page += "[<a href=\"/log?";
-        page += logFileParam;
-        page += "p=";
-        page += logPage - 1;
-        page += "\">&gt;&gt;</a>]\n";
-      } else {
-        if (logFileName == LOGFILENAME2 && SPIFFS.exists(LOGFILENAME)) {
-          File logFileNext = SPIFFS.open(LOGFILENAME, "r");
-          const unsigned int logPageNext = logFileNext.size() / LOG_PAGE_SIZE;
-          logFileNext.close();
-          page += "[<a href=\"/log?p=";
-          page += logPageNext;
-          page += "\">&gt;&gt;</a>]\n";
-        } else
-          page += "[&gt;&gt;]\n";
-      }
-
-      // Print log fragment
-      page += "<br/><span style=\"font-family: monospace;\">";
-
-      if (fsize > (logPage + 1) * LOG_PAGE_SIZE) {
-        logFile.seek(fsize - (logPage + 1) * LOG_PAGE_SIZE);
-        logFile.readStringUntil('\n');
-      }
-      String line;
-      while (logFile.available() && logFile.position() <= fsize - logPage * LOG_PAGE_SIZE) {
-        line = logFile.readStringUntil('\n');
-        page += "<br>";
-        page += line;   // already contains '\n'
-      }
-      logFile.close();
-    }
-
-    page += "</span>\n<hr/>\n";
-  } else
-    page += "<br/>Logging is disabled (missing or full file system)";
-  page += "</body></html>";
-  server.send(200, "text/html", page);
-}
-
-// Program setup
-const unsigned long WIFI_CONNECT_TIMEOUT = 200000UL;  // (ms)
-void setup(void) {
-  delay(5000);
-  encoder.begin();
-  pinMode (CLK, INPUT);
-  pinMode (DT, INPUT);
-  pinMode (SW, INPUT);
-  rotation = digitalRead(CLK);
-  logger.begin();
-  String msg = "booted: ";
-  msg += APPNAME;
-  msg += " v";
-  msg += APPVERSION;
-  msg += " build ";
-  msg += COMPILATION_TIMESTAMP;
-  logger.writeln(msg);
-
-  // Serial line
-  Serial.begin(BAUDRATE);
-  Serial.println("");
-
-  // I/O
-  pinMode(BUILTINLED, OUTPUT);
-  pinMode(PUSHBUTTON, INPUT);
-  led.LowActive();
-
-  // If the push button is pressed on boot, offer Wi-Fi configuration
-  if (button.isPressedRaw() == true) {
-    Serial.println("Push button pressed on boot; going to Wi-Fi Manager");
-    logger.writeln("going to Wi-Fi Manager");
-    led.On().Update();
-
-    WiFiManager wifiManager;
-    wifiManager.startConfigPortal(HOSTNAME, WIFICONFIGPASS);
-  }
-  //  button.setEventHandler(handleButtonEvent);
-  ButtonConfig* buttonConfig = button.getButtonConfig();
-  buttonConfig->setEventHandler(handleButtonEvent);
-  buttonConfig->setFeature(ButtonConfig::kFeatureDoubleClick);
-  buttonConfig->setFeature(ButtonConfig::kFeatureLongPress);
-  buttonConfig->setFeature(
-    ButtonConfig::kFeatureSuppressClickBeforeDoubleClick);
-  buttonConfig->setFeature(ButtonConfig::kFeatureSuppressAfterClick);
-  buttonConfig->setFeature(ButtonConfig::kFeatureSuppressAfterLongPress);
-  buttonConfig->setFeature(ButtonConfig::kFeatureSuppressAfterDoubleClick);
-  buttonConfig->setClickDelay(140);
-  buttonConfig->setDoubleClickDelay(240);
-
-  debouncer_CLK.attach(CLK);
-  debouncer_DT.attach(DT);
-  debouncer_CLK.interval(20);
-  debouncer_DT.interval(20);
-
-  led.Off().Update();
-  delay(15000);
-  // Network
-  WiFi.mode(WIFI_STA);      // Important to avoid starting with an access point
-  WiFi.hostname(HOSTNAME);
-  WiFi.begin();             // Connect using stored credentials
-  Serial.print("Connecting to ");
-  Serial.print(WiFi.SSID());
-  unsigned long time0 = millis(), time1 = time0, timedot = time0;
-  led.Breathe(GLOW_DELAY).Forever().Update();
-  while (WiFi.status() != WL_CONNECTED && time1 - time0 < WIFI_CONNECT_TIMEOUT) {
-    yield();
-    led.Update();
-    time1 = millis();
-    if (time1 - timedot >= 100UL) {
-      Serial.print(".");
-      timedot = time1;
-    }
-  }
-  Serial.println("");
-  led.Off().Update();
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("Connected!");
-    logger.writeln("Wi-Fi connected on boot");
-    Serial.printf("IP address: %s, RSSI: %d dBm\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
-  } else {
-    Serial.println("Connection timeout");
-    logger.writeln("Wi-Fi connection timeout on boot");
-  }
-
-
-  // Setup clock
-  timeZone = TimeZone::forZoneInfo(&ACETIME_TZ(TIMEZONE), &zoneProcessor);
-  ntpClock.setup();
-  sysClock.setup();
-
-  // Run discovery
-
-  yl_discover();
-
-  // Load settings from EEPROM
-  EEPROM.begin(4);
-  //  delay(15000);
-  if (EEPROM.read(0) == 'Y' && EEPROM.read(1) == 'B' && EEPROM.read(2) == EEPROM_FORMAT_VERSION) {
-
-    char bulbid_c[YL_ID_LENGTH + 1] = {0,};
-    const uint8_t n = EEPROM.read(3);
-    Serial.printf("Found %d bulb%s configuration in EEPROM\n", n, n == 1 ? "" : "s");
-    EEPROM.end();
-    EEPROM.begin(2 + 1 + 1 + (YL_ID_LENGTH + 1) * n);
-    unsigned int eeprom_addr = 4;
-    for (uint8_t i = 0; i < n; i++) {
-      EEPROM.get(eeprom_addr, bulbid_c);
-      eeprom_addr += sizeof(bulbid_c);
-
-      for (uint8_t j = 0; j < bulbs.size(); j++) {
-        YBulb *bulb = bulbs.get(j);
-        if (*bulb == bulbid_c) {
-          bulb->Activate();
-          break;
+      for (uint8_t i = 0; i < bulbs.size(); i++) {
+        YBulb *bulb = bulbs.get(i);
+        if (bulb->isActive()) {
+          if (bulb->Temperature(client, temperature)) {
+            Serial.printf("Bulb connection to %s failed\n", bulb->GetIP());
+            ret = -2;
+            yield();        // Connection timeout is lenghty; allow for background processing (is this really needed?)
+          } else
+            Serial.printf("Bulb %d toggle sent\n", i + 1);
         }
       }
-    }
-
-    nabulbs = yl_nabulbs();
-    if (nabulbs == n)
-      Serial.printf("Successfully linked to %d bulb%s\n", nabulbs, nabulbs == 1 ? "" : "s");
-    else
-      Serial.printf("Linking completed with %d out of %d bulb%s skipped\n", n - nabulbs, n, n == 1 ? "" : "s");
-  } else
-    Serial.println("No bulb configuration found in EEPROM; need to link bulbs manually");
-  EEPROM.end();
-
-  // Kick off mDNS
-  if (MDNS.begin(HOSTNAME))
-    Serial.printf("mDNS responder started; address=%s.local\n", HOSTNAME);
-
-  // Kick off the web server
-  server.on("/",     handleRoot);
-  server.on("/conf", handleConf);
-  server.on("/save", handleSave);
-  server.on("/flip", handleFlip);
-  server.on("/log",  handleLog);
-  server.begin();
-  Serial.println("Web server started");
-
-  // Reduce connection timeout for inactive bulbs
-  client.setTimeout(CONNECTION_TIMEOUT);
-}
-
-void interrupt() {
-  encoder.tick();
-  encoder_temperature.tick();
-  encoder_color.tick();
-}
-
-// Program loop
-void loop(void) {
-  //
-  //  if (first_loop){
-  //    delay(5000);
-  //    first_loop = false;
-  //  }
-  encoder.tick();
-  RotPosition = encoder.getPosition();
-  if (RotPosition >= 10) {
-    RotPosition = 10;
-    encoder.setPosition(10);
-  }
-  if (RotPosition <= 0) {
-    RotPosition = 0;
-    encoder.setPosition(0);
-  }
-  if (RotPosition != rotation) {
-    yl_bright(RotPosition * 10);
-    Serial.print("Encoder RotPosition: ");
-    Serial.println(RotPosition);
-    Serial.println ("clockwise");
-    rotation = RotPosition;
-  }
-
-
-  // Check the button state
-  if (button_long_clicked) {
-    button_long_clicked = false;
-    while (button_long_clicked == false) {
-      encoder_temperature.tick();
-      RotPosition_temperature = encoder_temperature.getPosition();
-      if (RotPosition_temperature >= 33) {
-        RotPosition_temperature = 33;
-        encoder_temperature.setPosition(33);
-      }
-      if (RotPosition_temperature <= 8.5) {
-        RotPosition_temperature = 8.5;
-        encoder_temperature.setPosition(8.5);
-      }
-      if (RotPosition_temperature != rotation_temperature) {
-        yl_temperature(RotPosition_temperature * 200);
-        Serial.print("Encoder RotPosition_temperature: ");
-        Serial.println(RotPosition_temperature);
-        Serial.println ("clockwise");
-        rotation_temperature = RotPosition_temperature;
-      }
-
-      if (button_pressed) {
-        button_pressed = false;
-        Serial.println("Button pressed");
-        logger.writeln("Button pressed");
-        led.On().Update();
-        delay(BLINK_DELAY);       // 1 blink
-        led.Off().Update();
-
-        // LED diagnostics:
-        // 1 blink  - light flip OK
-        // 1 + 2 blinks - one of the bulbs did not respond
-        // 2 blinks - button not linked to bulbs
-        // 1 glowing - Wi-Fi disconnected
-        if (WiFi.status() != WL_CONNECTED) {
-
-          // No Wi-Fi
-          Serial.println("No Wi-Fi connection");
-          led.Breathe(GLOW_DELAY).Repeat(1);            // 1 glowing
-        } else {
-          if (nabulbs) {
-
-            // Flipping may block, causing JLED-style blink not being properly processed. Hence, force sequential processing (first blink, then flip)
-            // To make JLED working smoothly in this case, an asynchronous WiFiClient.connect() method would be needed
-            // This is not included in ESP8266 Core (https://github.com/esp8266/Arduino/issues/922), but is available as a separate library (like ESPAsyncTCP)
-            // Since, for this project, it is a minor issue (flip being sent to bulbs with 100 ms delay), we stay with blocking connect()
-            led.On().Update();
-            delay(BLINK_DELAY);       // 1 blink. Note that using delay() inside loop() may skew sysClock, as per AceTime documentation
-            led.Off().Update();
-
-            if (yl_flip())
-
-              // Some bulbs did not respond
-              // Because of connection timeout, the blinking will be 1 + pause + 2
-              led.Blink(BLINK_DELAY, BLINK_DELAY * 2).Repeat(2);  // 2 blinks
-
-          } else {
-
-            // Button not linked
-            Serial.println("Button not linked to bulbs");
-            led.Blink(BLINK_DELAY, BLINK_DELAY * 2).Repeat(2);    // 2 blinks
-          }
-        }
-      }
-
-      // Report initial NTP synchronization event
-      if (sysClockIsInit != sysClock.isInit()) {
-        sysClockIsInit = sysClock.isInit();
-        if (sysClockIsInit)
-          logger.writeln("System clock synchronized with NTP");
-      }
-      button.check();
-      led.Update();
-      server.handleClient();
-      MDNS.update();
-      sysClock.loop();
-      logger.rotate();
-    }
-    button_long_clicked = false;
-  }
-
-
-
-  // Check the button state
-  if (button_double_clicked) {
-    button_double_clicked = false;
-    yl_color(rgb_colors[RotPosition_color]);
-    while (button_double_clicked == false) {
-      encoder_color.tick();
-      RotPosition_color = encoder_color.getPosition();
-      if (RotPosition_color >= 26) {
-        RotPosition_color = 26;
-        encoder_color.setPosition(26);
-      }
-      if (RotPosition_color <= 0) {
-        RotPosition_color = 0;
-        encoder_color.setPosition(0);
-      }
-      if (RotPosition_color != rotation_color) {
-        yl_color(rgb_colors[RotPosition_color]);
-        Serial.print("Encoder RotPosition_color: ");
-        Serial.println(rgb_colors[RotPosition_color]);
-        Serial.println ("clockwise_color");
-        rotation_color = RotPosition_color;
-      }
-
-
-      if (button_pressed) {
-        button_pressed = false;
-        Serial.println("Button pressed");
-        logger.writeln("Button pressed");
-        led.On().Update();
-        delay(BLINK_DELAY);       // 1 blink
-        led.Off().Update();
-
-        // LED diagnostics:
-        // 1 blink  - light flip OK
-        // 1 + 2 blinks - one of the bulbs did not respond
-        // 2 blinks - button not linked to bulbs
-        // 1 glowing - Wi-Fi disconnected
-        if (WiFi.status() != WL_CONNECTED) {
-
-          // No Wi-Fi
-          Serial.println("No Wi-Fi connection");
-          led.Breathe(GLOW_DELAY).Repeat(1);            // 1 glowing
-        } else {
-          if (nabulbs) {
-
-            // Flipping may block, causing JLED-style blink not being properly processed. Hence, force sequential processing (first blink, then flip)
-            // To make JLED working smoothly in this case, an asynchronous WiFiClient.connect() method would be needed
-            // This is not included in ESP8266 Core (https://github.com/esp8266/Arduino/issues/922), but is available as a separate library (like ESPAsyncTCP)
-            // Since, for this project, it is a minor issue (flip being sent to bulbs with 100 ms delay), we stay with blocking connect()
-            led.On().Update();
-            delay(BLINK_DELAY);       // 1 blink. Note that using delay() inside loop() may skew sysClock, as per AceTime documentation
-            led.Off().Update();
-
-            if (yl_flip())
-
-              // Some bulbs did not respond
-              // Because of connection timeout, the blinking will be 1 + pause + 2
-              led.Blink(BLINK_DELAY, BLINK_DELAY * 2).Repeat(2);  // 2 blinks
-
-          } else {
-
-            // Button not linked
-            Serial.println("Button not linked to bulbs");
-            led.Blink(BLINK_DELAY, BLINK_DELAY * 2).Repeat(2);    // 2 blinks
-          }
-        }
-      }
-
-      // Report initial NTP synchronization event
-      if (sysClockIsInit != sysClock.isInit()) {
-        sysClockIsInit = sysClock.isInit();
-        if (sysClockIsInit)
-          logger.writeln("System clock synchronized with NTP");
-      }
-
-      //      rotation_color = value_color;
-      button.check();
-      led.Update();
-      server.handleClient();
-      MDNS.update();
-      sysClock.loop();
-      logger.rotate();
-    }
-    button_double_clicked = false;
-    yl_temperature(RotPosition_temperature * 200);
-  }
-
-
-  if (button_pressed) {
-    button_pressed = false;
-    Serial.println("Button pressed");
-    logger.writeln("Button pressed");
-    led.On().Update();
-    delay(BLINK_DELAY);       // 1 blink
-    led.Off().Update();
-
-    // LED diagnostics:
-    // 1 blink  - light flip OK
-    // 1 + 2 blinks - one of the bulbs did not respond
-    // 2 blinks - button not linked to bulbs
-    // 1 glowing - Wi-Fi disconnected
-    if (WiFi.status() != WL_CONNECTED) {
-
-      // No Wi-Fi
-      Serial.println("No Wi-Fi connection");
-      led.Breathe(GLOW_DELAY).Repeat(1);            // 1 glowing
     } else {
+      Serial.println("No linked bulbs found");
+      ret = -1;
+    }
+    return ret;
+  }
+
+  // Set color
+  int yl_color(int color) {
+    int ret = 0;
+    if (nabulbs) {
+      for (uint8_t i = 0; i < bulbs.size(); i++) {
+        YBulb *bulb = bulbs.get(i);
+        if (bulb->isActive()) {
+          if (bulb->Color(client, color)) {
+            Serial.printf("Bulb connection to %s failed\n", bulb->GetIP());
+            ret = -2;
+            yield();        // Connection timeout is lenghty; allow for background processing (is this really needed?)
+          } else
+            Serial.printf("Bulb %d toggle sent\n", i + 1);
+        }
+      }
+    } else {
+      Serial.println("No linked bulbs found");
+      ret = -1;
+    }
+    return ret;
+  }
+
+
+  // Set music on
+  int yl_music_on() {
+    int ret = 0;
+    if (nabulbs) {
+      for (uint8_t i = 0; i < bulbs.size(); i++) {
+        YBulb *bulb = bulbs.get(i);
+        if (bulb->isActive()) {
+          if (bulb->MusicOn(client)) {
+            Serial.printf("Bulb connection to %s failed\n", bulb->GetIP());
+            ret = -2;
+            yield();        // Connection timeout is lenghty; allow for background processing (is this really needed?)
+          } else
+            Serial.printf("Bulb %d toggle sent\n", i + 1);
+        }
+      }
+    } else {
+      Serial.println("No linked bulbs found");
+      ret = -1;
+    }
+    return ret;
+  }
+
+  // Set music off
+  int yl_music_off() {
+    int ret = 0;
+    if (nabulbs) {
+      for (uint8_t i = 0; i < bulbs.size(); i++) {
+        YBulb *bulb = bulbs.get(i);
+        if (bulb->isActive()) {
+          if (bulb->MusicOff(client)) {
+            Serial.printf("Bulb connection to %s failed\n", bulb->GetIP());
+            ret = -2;
+            yield();        // Connection timeout is lenghty; allow for background processing (is this really needed?)
+          } else
+            Serial.printf("Bulb %d toggle sent\n", i + 1);
+        }
+      }
+    } else {
+      Serial.println("No linked bulbs found");
+      ret = -1;
+    }
+    return ret;
+  }
+
+
+  // Return number of active bulbs
+  uint8_t yl_nabulbs(void) {
+    uint8_t n = 0;
+    for (uint8_t i = 0; i < bulbs.size(); i++)
+      if (bulbs.get(i)->isActive())
+        n++;
+    return n;
+  }
+
+  // Web server configuration pages
+  // Root page. Show status
+  void handleRoot() {
+    String page = "<html><head><title>";
+    page += HOSTNAME;
+    page += "</title></head><body><h3>Yeelight Button</h3>";
+    if (nabulbs) {
+      page += "<p>Linked to the bulb";
+      if (nabulbs > 1)
+        page += "s";
+      page += ":</p><p><ul>";
+      for (uint8_t i = 0; i < bulbs.size(); i++) {
+        YBulb *bulb = bulbs.get(i);
+        if (bulb->isActive()) {
+          page += "<li>id(";
+          page += bulb->GetID();
+          page += "), ip(";
+          page += bulb->GetIP();
+          page += "), name(";
+          page += bulb->GetName();
+          page += "), model(";
+          page += bulb->GetModel();
+          page += ")</li>";
+        }
+      }
+      page += "</ul></p>";
+    } else
+      page += "<p>Not linked to a bulb</p>";
+    page += "<p>[<a href=\"conf\">Change</a>]";
+    if (nabulbs)
+      page += " [<a href=\"flip\">Flip</a>]";
+    page += " [<a href=\"log\">Log</a>]";
+    page += "</p><hr/><p><i>Connected to network ";
+    page += WiFi.SSID();
+    page += ", hostname ";
+    page += HOSTNAME;
+    page += ".local (";
+    page += WiFi.localIP().toString();
+    page += "), RSSI ";
+    page += WiFi.RSSI();
+    page += " dBm.</i></p>";
+    page += "<p><small><a href=\"";
+    page += APPURL;
+    page += "\">";
+    page += APPNAME;
+    page += "</a> v";
+    page += APPVERSION;
+    page += " build ";
+    page += COMPILATION_TIMESTAMP;
+    page += "</small></p>";
+    page += "</body></html>";
+    server.send(200, "text/html", page);
+  }
+
+  // Bulb discovery page
+  void handleConf() {
+    String page = "<html><head><title>";
+    page += HOSTNAME;
+    page += " conf</title></head><body><h3>Yeelight Button Configuration</h3>";
+    page += "<p>[<a href=\"/conf\">Rescan</a>] [<a href=\"/save\">Unlink</a>] [<a href=\"..\">Back</a>]</p>";
+    page += "<p><i>Scanning ";
+    page += WiFi.SSID();
+    page += " for Yeelight devices...</i></p>";
+    page += "<p><i>Hint: turn all bulbs off, except the desired ones, in order to identify them easily.</i></p>";
+
+    // Use chunked transfer to show scan in progress. Works in Chrome, not so well in Firefox
+    server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+    server.send(200, "text/html", page);
+    yl_discover();
+    page = "<p>Found ";
+    page += bulbs.size();
+    page += " bulb";
+    if (bulbs.size() != 1)
+      page += "s";
+    page += ". Select bulbs to link from the list below.</p>";
+    page += "<form action=\"/save\"><p style=\"font-family: monospace;\">";
+    for (uint8_t i = 0; i < bulbs.size(); i++) {
+      YBulb *bulb = bulbs.get(i);
+      page += "<input type=\"checkbox\" name=\"bulb\" value=\"";
+      page += i;
+      page += "\"";
+      if (bulb->isActive())
+        page += " checked";
+      page += "/> ";
+      page += bulb->GetIP();
+      page += " id(";
+      page += bulb->GetID();
+      page += ") name(";
+      page += bulb->GetName();
+      page += ") model(";
+      page += bulb->GetModel();
+      page += ") power(";
+      page += bulb->GetPower() ? "<b>on</b>" : "off";
+      page += ")<br/>";
+    }
+    page += "</p><p><input type=\"submit\" value=\"Link\"/></p></form></body></html>";
+    server.sendContent(page);
+    server.sendContent("");
+    server.client().stop();   // Terminate chunked transfer
+  }
+
+  // Configuration saving page
+  // EEPROM format:
+  //   0-1: 'YB' - Yeelight Bulb configuration marker
+  //     2: format version. Increment each time the format changes
+  //     3: number of stored bulbs
+  //  4-22: <selected bulb ID> (19 bytes, null-terminated)
+  //      : ...
+  const uint8_t EEPROM_FORMAT_VERSION = 49U;  // The first version of the format stored 1 bulb id right after the marker. ID stars with ASCII '0' == 48
+  void handleSave() {
+
+    unsigned int nargs = server.args();
+    const size_t used_eeprom_size = 2 + 1 + 1 + (YL_ID_LENGTH + 1) * nargs;   // TODO: maybe put some constraint on nargs (externally provided parameter)
+    EEPROM.begin(used_eeprom_size);
+    unsigned int eeprom_addr = 4;
+
+    for (uint8_t i = 0; i < bulbs.size(); i++)
+      bulbs.get(i)->Deactivate();
+    nabulbs = 0;
+
+    if (nargs) {
+      for (unsigned int i = 0; i < nargs; i++) {
+        unsigned char n = server.arg(i).c_str()[0] - '0';
+        if (n < bulbs.size()) {
+          YBulb *bulb = bulbs.get(n);
+          char bulbid_c[YL_ID_LENGTH + 1] = {0,};
+          strncpy(bulbid_c, bulb->GetID(), YL_ID_LENGTH);
+          EEPROM.put(eeprom_addr, bulbid_c);
+          eeprom_addr += sizeof(bulbid_c);
+          bulb->Activate();
+        } else
+          Serial.printf("Bulb #%d does not exist\n", n);
+      }
+
+      nabulbs = yl_nabulbs();
       if (nabulbs) {
 
-        // Flipping may block, causing JLED-style blink not being properly processed. Hence, force sequential processing (first blink, then flip)
-        // To make JLED working smoothly in this case, an asynchronous WiFiClient.connect() method would be needed
-        // This is not included in ESP8266 Core (https://github.com/esp8266/Arduino/issues/922), but is available as a separate library (like ESPAsyncTCP)
-        // Since, for this project, it is a minor issue (flip being sent to bulbs with 100 ms delay), we stay with blocking connect()
-        led.On().Update();
-        delay(BLINK_DELAY);       // 1 blink. Note that using delay() inside loop() may skew sysClock, as per AceTime documentation
-        led.Off().Update();
+        // Write the header
+        EEPROM.write(0, 'Y');
+        EEPROM.write(1, 'B');
+        EEPROM.write(2, EEPROM_FORMAT_VERSION);
+        EEPROM.write(3, nabulbs);
+        Serial.printf("%d bulb%s stored in EEPROM, using %u byte(s)\n", nabulbs, nabulbs == 1 ? "" : "s", eeprom_addr);
+      } else
+        Serial.println("No bulbs were stored in EEPROM");
+    } else {
 
-        if (yl_flip())
+      // Unlink all
 
-          // Some bulbs did not respond
-          // Because of connection timeout, the blinking will be 1 + pause + 2
-          led.Blink(BLINK_DELAY, BLINK_DELAY * 2).Repeat(2);  // 2 blinks
+      // Overwriting the EEPROM marker will effectively cause forgetting the settings
+      EEPROM.write(0, 0);
+      Serial.println("Bulbs unlinked from the switch");
+    }
 
-      } else {
+    // TODO: check for errors?
+    EEPROM.commit();
+    EEPROM.end();
 
-        // Button not linked
-        Serial.println("Button not linked to bulbs");
-        led.Blink(BLINK_DELAY, BLINK_DELAY * 2).Repeat(2);    // 2 blinks
+    String page = "<html><head><title>";
+    page += HOSTNAME;
+    page += nabulbs || !nargs ? " saved" : " error";
+    page += "</title></head><body><h3>Yeelight Button Configuration ";
+    page += nabulbs || !nargs ?  "Saved" : " Error";
+    page += "</h3>";
+    if (nargs) {
+      if (nabulbs) {
+        page += "<p>";
+        page += nabulbs;
+        page += " bulb";
+        if (nabulbs != 1)
+          page += "s";
+        page += " linked</p>";
+      } else
+        page += "<p>Too many bulbs passed</p>";
+    } else
+      page += "<p>Bulbs unlinked</p>";
+    page += "<p>[<a href=\"..\">Back</a>]</p>";
+    page += "</body></html>";
+    server.send(200, "text/html", page);
+  }
+
+  // Bulb flip page. Accessing this page immediately flips the light
+  void handleFlip() {
+    yl_flip();
+    logger.writeln("Web page flip received");
+
+    String page = "<html><head><title>";
+    page += HOSTNAME;
+    page += " flip</title></head><body><h3>Yeelight Button Flip</h3>";
+    page += nabulbs ? "<p>Light flipped</p>" : "<p>No linked bulbs found</p>";
+    page += "<p>[<a href=\"/flip\">Flip</a>] [<a href=\"..\">Back</a>]</p>";
+    page += "</body></html>";
+    server.send(200, "text/html", page);
+  }
+
+  // Display log
+  const unsigned long LOG_PAGE_SIZE = 2048UL;  // (bytes)
+  void handleLog() {
+    Serial.println("Displaying log");
+
+    // Parse query params
+    unsigned int logPage = 0;
+    String logFileName(LOGFILENAME);
+    String logFileParam;
+    for (int i = 0; i < server.args(); i++) {
+      String argname = server.argName(i);
+      if (argname == "p")
+        logPage = String(server.arg(i)).toInt();
+      else {
+        if (argname == "r") {
+          logFileName = LOGFILENAME2;
+          logFileParam = "r=1&";
+        }
       }
     }
+
+    String page = "<html><head><title>";
+    page += HOSTNAME;
+    page += " event log</title></head><body><h3>Yeelight Button Event Log</h3>[<a href=\"/\">home</a>] ";
+    if (logger.isEnabled()) {
+      File logFile = SPIFFS.open(logFileName, "r");
+      if (!logFile)
+        page += "<span><br/>File opening error";
+      else {
+        const uint32_t fsize = logFile.size();
+
+        // Print pagination buttons
+        if (fsize > (logPage + 1) * LOG_PAGE_SIZE) {
+          page += "[<a href=\"/log?";
+          page += logFileParam;
+          page += "p=";
+          page += logPage + 1;
+          page += "\">&lt;&lt;</a>]\n";
+        } else {
+          if (logFileName == LOGFILENAME && SPIFFS.exists(LOGFILENAME2))
+            page += "[<a href=\"/log?r=1\">&lt;&lt;</a>]\n";
+          else
+            page += "[&lt;&lt;]\n";
+        }
+        if (logPage) {
+          page += "[<a href=\"/log?";
+          page += logFileParam;
+          page += "p=";
+          page += logPage - 1;
+          page += "\">&gt;&gt;</a>]\n";
+        } else {
+          if (logFileName == LOGFILENAME2 && SPIFFS.exists(LOGFILENAME)) {
+            File logFileNext = SPIFFS.open(LOGFILENAME, "r");
+            const unsigned int logPageNext = logFileNext.size() / LOG_PAGE_SIZE;
+            logFileNext.close();
+            page += "[<a href=\"/log?p=";
+            page += logPageNext;
+            page += "\">&gt;&gt;</a>]\n";
+          } else
+            page += "[&gt;&gt;]\n";
+        }
+
+        // Print log fragment
+        page += "<br/><span style=\"font-family: monospace;\">";
+
+        if (fsize > (logPage + 1) * LOG_PAGE_SIZE) {
+          logFile.seek(fsize - (logPage + 1) * LOG_PAGE_SIZE);
+          logFile.readStringUntil('\n');
+        }
+        String line;
+        while (logFile.available() && logFile.position() <= fsize - logPage * LOG_PAGE_SIZE) {
+          line = logFile.readStringUntil('\n');
+          page += "<br>";
+          page += line;   // already contains '\n'
+        }
+        logFile.close();
+      }
+
+      page += "</span>\n<hr/>\n";
+    } else
+      page += "<br/>Logging is disabled (missing or full file system)";
+    page += "</body></html>";
+    server.send(200, "text/html", page);
   }
 
-  // Report initial NTP synchronization event
-  if (sysClockIsInit != sysClock.isInit()) {
-    sysClockIsInit = sysClock.isInit();
-    if (sysClockIsInit)
-      logger.writeln("System clock synchronized with NTP");
+  // Program setup
+  const unsigned long WIFI_CONNECT_TIMEOUT = 200000UL;  // (ms)
+  void setup(void) {
+    delay(5000);
+    encoder.begin();
+    pinMode (CLK, INPUT);
+    pinMode (DT, INPUT);
+    pinMode (SW, INPUT);
+    rotation = digitalRead(CLK);
+    logger.begin();
+    String msg = "booted: ";
+    msg += APPNAME;
+    msg += " v";
+    msg += APPVERSION;
+    msg += " build ";
+    msg += COMPILATION_TIMESTAMP;
+    logger.writeln(msg);
+
+    // Serial line
+    Serial.begin(BAUDRATE);
+    Serial.println("");
+
+    // I/O
+    pinMode(BUILTINLED, OUTPUT);
+    pinMode(PUSHBUTTON, INPUT);
+    led.LowActive();
+
+    // If the push button is pressed on boot, offer Wi-Fi configuration
+    if (button.isPressedRaw() == true) {
+      Serial.println("Push button pressed on boot; going to Wi-Fi Manager");
+      logger.writeln("going to Wi-Fi Manager");
+      led.On().Update();
+
+      WiFiManager wifiManager;
+      wifiManager.startConfigPortal(HOSTNAME, WIFICONFIGPASS);
+    }
+    //  button.setEventHandler(handleButtonEvent);
+    ButtonConfig* buttonConfig = button.getButtonConfig();
+    buttonConfig->setEventHandler(handleButtonEvent);
+    buttonConfig->setFeature(ButtonConfig::kFeatureDoubleClick);
+    buttonConfig->setFeature(ButtonConfig::kFeatureLongPress);
+    buttonConfig->setFeature(
+      ButtonConfig::kFeatureSuppressClickBeforeDoubleClick);
+    buttonConfig->setFeature(ButtonConfig::kFeatureSuppressAfterClick);
+    buttonConfig->setFeature(ButtonConfig::kFeatureSuppressAfterLongPress);
+    buttonConfig->setFeature(ButtonConfig::kFeatureSuppressAfterDoubleClick);
+    buttonConfig->setClickDelay(140);
+    buttonConfig->setDoubleClickDelay(240);
+
+    debouncer_CLK.attach(CLK);
+    debouncer_DT.attach(DT);
+    debouncer_CLK.interval(20);
+    debouncer_DT.interval(20);
+
+    led.Off().Update();
+    delay(15000);
+    // Network
+    WiFi.mode(WIFI_STA);      // Important to avoid starting with an access point
+    WiFi.hostname(HOSTNAME);
+    WiFi.begin();             // Connect using stored credentials
+    Serial.print("Connecting to ");
+    Serial.print(WiFi.SSID());
+    unsigned long time0 = millis(), time1 = time0, timedot = time0;
+    led.Breathe(GLOW_DELAY).Forever().Update();
+    while (WiFi.status() != WL_CONNECTED && time1 - time0 < WIFI_CONNECT_TIMEOUT) {
+      yield();
+      led.Update();
+      time1 = millis();
+      if (time1 - timedot >= 100UL) {
+        Serial.print(".");
+        timedot = time1;
+      }
+    }
+    Serial.println("");
+    led.Off().Update();
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("Connected!");
+      logger.writeln("Wi-Fi connected on boot");
+      Serial.printf("IP address: %s, RSSI: %d dBm\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    } else {
+      Serial.println("Connection timeout");
+      logger.writeln("Wi-Fi connection timeout on boot");
+    }
+
+
+    // Setup clock
+    timeZone = TimeZone::forZoneInfo(&ACETIME_TZ(TIMEZONE), &zoneProcessor);
+    ntpClock.setup();
+    sysClock.setup();
+
+    // Run discovery
+
+    yl_discover();
+
+    // Load settings from EEPROM
+    EEPROM.begin(4);
+    //  delay(15000);
+    if (EEPROM.read(0) == 'Y' && EEPROM.read(1) == 'B' && EEPROM.read(2) == EEPROM_FORMAT_VERSION) {
+
+      char bulbid_c[YL_ID_LENGTH + 1] = {0,};
+      const uint8_t n = EEPROM.read(3);
+      Serial.printf("Found %d bulb%s configuration in EEPROM\n", n, n == 1 ? "" : "s");
+      EEPROM.end();
+      EEPROM.begin(2 + 1 + 1 + (YL_ID_LENGTH + 1) * n);
+      unsigned int eeprom_addr = 4;
+      for (uint8_t i = 0; i < n; i++) {
+        EEPROM.get(eeprom_addr, bulbid_c);
+        eeprom_addr += sizeof(bulbid_c);
+
+        for (uint8_t j = 0; j < bulbs.size(); j++) {
+          YBulb *bulb = bulbs.get(j);
+          if (*bulb == bulbid_c) {
+            bulb->Activate();
+            break;
+          }
+        }
+      }
+
+      nabulbs = yl_nabulbs();
+      if (nabulbs == n)
+        Serial.printf("Successfully linked to %d bulb%s\n", nabulbs, nabulbs == 1 ? "" : "s");
+      else
+        Serial.printf("Linking completed with %d out of %d bulb%s skipped\n", n - nabulbs, n, n == 1 ? "" : "s");
+    } else
+      Serial.println("No bulb configuration found in EEPROM; need to link bulbs manually");
+    EEPROM.end();
+
+    // Kick off mDNS
+    if (MDNS.begin(HOSTNAME))
+      Serial.printf("mDNS responder started; address=%s.local\n", HOSTNAME);
+
+    // Kick off the web server
+    server.on("/",     handleRoot);
+    server.on("/conf", handleConf);
+    server.on("/save", handleSave);
+    server.on("/flip", handleFlip);
+    server.on("/log",  handleLog);
+    server.begin();
+    Serial.println("Web server started");
+
+    // Reduce connection timeout for inactive bulbs
+    client.setTimeout(CONNECTION_TIMEOUT);
   }
 
-  // Background processing
-  button.check();
-  led.Update();
-  server.handleClient();
-  MDNS.update();
-  sysClock.loop();
-  logger.rotate();
-}
+  void interrupt() {
+    encoder.tick();
+    encoder_temperature.tick();
+    encoder_color.tick();
+  }
+
+  // Program loop
+  void loop(void) {
+    //
+    //  if (first_loop){
+    //    delay(5000);
+    //    first_loop = false;
+    //  }
+    encoder.tick();
+    RotPosition = encoder.getPosition();
+    if (RotPosition >= 10) {
+      RotPosition = 10;
+      encoder.setPosition(10);
+    }
+    if (RotPosition <= 0) {
+      RotPosition = 0;
+      encoder.setPosition(0);
+    }
+    if (RotPosition != rotation) {
+      if (RotPosition == 0) {
+        temp_pos = 1;
+      } else temp_pos = RotPosition * 10;
+
+      yl_bright(temp_pos);
+      Serial.print("Encoder RotPosition: ");
+      Serial.println(RotPosition);
+      Serial.println ("clockwise");
+      rotation = RotPosition;
+    }
+
+
+    // Check the button state
+    if (button_long_clicked) {
+      button_long_clicked = false;
+      night = yl_night_mode();
+      Serial.print("NIGHT: \n");
+      Serial.print(night);
+      Serial.println("\n");
+      if (night == 1) {
+        yl_flip();
+        yl_bright(1);
+        yl_temperature(1700);
+        RotPosition = 0;
+        encoder.setPosition(0);
+        RotPosition_temperature = 8.5;
+        encoder_temperature.setPosition(8.5);
+        button_long_clicked = true;
+      }
+      while (button_long_clicked == false) {
+        encoder_temperature.tick();
+        RotPosition_temperature = encoder_temperature.getPosition();
+        if (RotPosition_temperature >= 33) {
+          RotPosition_temperature = 33;
+          encoder_temperature.setPosition(33);
+        }
+        if (RotPosition_temperature <= 8.5) {
+          RotPosition_temperature = 8.5;
+          encoder_temperature.setPosition(8.5);
+        }
+        if (RotPosition_temperature != rotation_temperature) {
+          yl_temperature(RotPosition_temperature * 200);
+          Serial.print("Encoder RotPosition_temperature: ");
+          Serial.println(RotPosition_temperature);
+          Serial.println ("clockwise");
+          rotation_temperature = RotPosition_temperature;
+        }
+
+        if (button_pressed) {
+          button_pressed = false;
+          button_long_clicked = true;
+          Serial.println("Button pressed");
+          logger.writeln("Button pressed");
+          led.On().Update();
+          delay(BLINK_DELAY);       // 1 blink
+          led.Off().Update();
+
+          // LED diagnostics:
+          // 1 blink  - light flip OK
+          // 1 + 2 blinks - one of the bulbs did not respond
+          // 2 blinks - button not linked to bulbs
+          // 1 glowing - Wi-Fi disconnected
+          if (WiFi.status() != WL_CONNECTED) {
+
+            // No Wi-Fi
+            Serial.println("No Wi-Fi connection");
+            led.Breathe(GLOW_DELAY).Repeat(1);            // 1 glowing
+          } else {
+            if (nabulbs) {
+
+              // Flipping may block, causing JLED-style blink not being properly processed. Hence, force sequential processing (first blink, then flip)
+              // To make JLED working smoothly in this case, an asynchronous WiFiClient.connect() method would be needed
+              // This is not included in ESP8266 Core (https://github.com/esp8266/Arduino/issues/922), but is available as a separate library (like ESPAsyncTCP)
+              // Since, for this project, it is a minor issue (flip being sent to bulbs with 100 ms delay), we stay with blocking connect()
+              led.On().Update();
+              delay(BLINK_DELAY);       // 1 blink. Note that using delay() inside loop() may skew sysClock, as per AceTime documentation
+              led.Off().Update();
+
+              if (yl_flip())
+
+                // Some bulbs did not respond
+                // Because of connection timeout, the blinking will be 1 + pause + 2
+                led.Blink(BLINK_DELAY, BLINK_DELAY * 2).Repeat(2);  // 2 blinks
+
+            } else {
+
+              // Button not linked
+              Serial.println("Button not linked to bulbs");
+              led.Blink(BLINK_DELAY, BLINK_DELAY * 2).Repeat(2);    // 2 blinks
+            }
+          }
+        }
+
+        // Report initial NTP synchronization event
+        if (sysClockIsInit != sysClock.isInit()) {
+          sysClockIsInit = sysClock.isInit();
+          if (sysClockIsInit)
+            logger.writeln("System clock synchronized with NTP");
+        }
+        button.check();
+        led.Update();
+        server.handleClient();
+        MDNS.update();
+        sysClock.loop();
+        logger.rotate();
+      }
+      button_long_clicked = false;
+    }
+
+
+
+    // Check the button state
+    if (button_double_clicked) {
+      button_double_clicked = false;
+      yl_color(rgb_colors[RotPosition_color]);
+      while (button_double_clicked == false) {
+        encoder_color.tick();
+        RotPosition_color = encoder_color.getPosition();
+        if (RotPosition_color >= 26) {
+          RotPosition_color = 26;
+          encoder_color.setPosition(26);
+        }
+        if (RotPosition_color <= 0) {
+          RotPosition_color = 0;
+          encoder_color.setPosition(0);
+        }
+        if (RotPosition_color != rotation_color) {
+          yl_color(rgb_colors[RotPosition_color]);
+          Serial.print("Encoder RotPosition_color: ");
+          Serial.println(rgb_colors[RotPosition_color]);
+          Serial.println ("clockwise_color");
+          rotation_color = RotPosition_color;
+        }
+
+
+        if (button_pressed) {
+          button_pressed = false;
+          Serial.println("Button pressed");
+          logger.writeln("Button pressed");
+          led.On().Update();
+          delay(BLINK_DELAY);       // 1 blink
+          led.Off().Update();
+
+          // LED diagnostics:
+          // 1 blink  - light flip OK
+          // 1 + 2 blinks - one of the bulbs did not respond
+          // 2 blinks - button not linked to bulbs
+          // 1 glowing - Wi-Fi disconnected
+          if (WiFi.status() != WL_CONNECTED) {
+
+            // No Wi-Fi
+            Serial.println("No Wi-Fi connection");
+            led.Breathe(GLOW_DELAY).Repeat(1);            // 1 glowing
+          } else {
+            if (nabulbs) {
+
+              // Flipping may block, causing JLED-style blink not being properly processed. Hence, force sequential processing (first blink, then flip)
+              // To make JLED working smoothly in this case, an asynchronous WiFiClient.connect() method would be needed
+              // This is not included in ESP8266 Core (https://github.com/esp8266/Arduino/issues/922), but is available as a separate library (like ESPAsyncTCP)
+              // Since, for this project, it is a minor issue (flip being sent to bulbs with 100 ms delay), we stay with blocking connect()
+              led.On().Update();
+              delay(BLINK_DELAY);       // 1 blink. Note that using delay() inside loop() may skew sysClock, as per AceTime documentation
+              led.Off().Update();
+
+              if (yl_flip())
+
+                // Some bulbs did not respond
+                // Because of connection timeout, the blinking will be 1 + pause + 2
+                led.Blink(BLINK_DELAY, BLINK_DELAY * 2).Repeat(2);  // 2 blinks
+
+            } else {
+
+              // Button not linked
+              Serial.println("Button not linked to bulbs");
+              led.Blink(BLINK_DELAY, BLINK_DELAY * 2).Repeat(2);    // 2 blinks
+            }
+          }
+        }
+
+        // Report initial NTP synchronization event
+        if (sysClockIsInit != sysClock.isInit()) {
+          sysClockIsInit = sysClock.isInit();
+          if (sysClockIsInit)
+            logger.writeln("System clock synchronized with NTP");
+        }
+
+        //      rotation_color = value_color;
+        button.check();
+        led.Update();
+        server.handleClient();
+        MDNS.update();
+        sysClock.loop();
+        logger.rotate();
+      }
+      button_double_clicked = false;
+      yl_temperature(RotPosition_temperature * 200);
+    }
+
+
+    if (button_pressed) {
+      button_pressed = false;
+      Serial.println("Button pressed");
+      logger.writeln("Button pressed");
+      led.On().Update();
+      delay(BLINK_DELAY);       // 1 blink
+      led.Off().Update();
+
+      // LED diagnostics:
+      // 1 blink  - light flip OK
+      // 1 + 2 blinks - one of the bulbs did not respond
+      // 2 blinks - button not linked to bulbs
+      // 1 glowing - Wi-Fi disconnected
+      if (WiFi.status() != WL_CONNECTED) {
+
+        // No Wi-Fi
+        Serial.println("No Wi-Fi connection");
+        led.Breathe(GLOW_DELAY).Repeat(1);            // 1 glowing
+      } else {
+        if (nabulbs) {
+
+          // Flipping may block, causing JLED-style blink not being properly processed. Hence, force sequential processing (first blink, then flip)
+          // To make JLED working smoothly in this case, an asynchronous WiFiClient.connect() method would be needed
+          // This is not included in ESP8266 Core (https://github.com/esp8266/Arduino/issues/922), but is available as a separate library (like ESPAsyncTCP)
+          // Since, for this project, it is a minor issue (flip being sent to bulbs with 100 ms delay), we stay with blocking connect()
+          led.On().Update();
+          delay(BLINK_DELAY);       // 1 blink. Note that using delay() inside loop() may skew sysClock, as per AceTime documentation
+          led.Off().Update();
+
+          if (yl_flip())
+
+            // Some bulbs did not respond
+            // Because of connection timeout, the blinking will be 1 + pause + 2
+            led.Blink(BLINK_DELAY, BLINK_DELAY * 2).Repeat(2);  // 2 blinks
+
+        } else {
+
+          // Button not linked
+          Serial.println("Button not linked to bulbs");
+          led.Blink(BLINK_DELAY, BLINK_DELAY * 2).Repeat(2);    // 2 blinks
+        }
+      }
+    }
+
+    // Report initial NTP synchronization event
+    if (sysClockIsInit != sysClock.isInit()) {
+      sysClockIsInit = sysClock.isInit();
+      if (sysClockIsInit)
+        logger.writeln("System clock synchronized with NTP");
+    }
+
+    // Background processing
+    button.check();
+    led.Update();
+    server.handleClient();
+    MDNS.update();
+    sysClock.loop();
+    logger.rotate();
+  }
